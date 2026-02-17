@@ -1,0 +1,7 @@
+# Frontend env file
+# notesfrontend/.env
+homefinitybackend/.env
+
+# Backend Spring Boot dev config
+homefinitybackend/src/main/resources/application-dev.properties
+homefinitybackend/docs/swagger.json
