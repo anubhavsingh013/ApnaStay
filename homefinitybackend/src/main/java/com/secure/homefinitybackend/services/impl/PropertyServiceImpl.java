@@ -39,7 +39,16 @@ public class PropertyServiceImpl implements PropertyService {
         
         User user = userRepository.findByUserName(userName)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+
+        Property property = getProperty(userName, request, user);
+
+        Property savedProperty = propertyRepository.save(property);
+        log.info("Property created successfully with ID: {} for user: {}", savedProperty.getId(), userName);
         
+        return convertToDTO(savedProperty);
+    }
+
+    private static Property getProperty(String userName, PropertyRequest request, User user) {
         Property property = new Property();
         property.setTitle(request.getTitle());
         property.setDescription(request.getDescription());
@@ -55,11 +64,7 @@ public class PropertyServiceImpl implements PropertyService {
         property.setImages(request.getImages());
         property.setOwnerUserName(userName);
         property.setOwner(user);
-        
-        Property savedProperty = propertyRepository.save(property);
-        log.info("Property created successfully with ID: {} for user: {}", savedProperty.getId(), userName);
-        
-        return convertToDTO(savedProperty);
+        return property;
     }
 
     @Override

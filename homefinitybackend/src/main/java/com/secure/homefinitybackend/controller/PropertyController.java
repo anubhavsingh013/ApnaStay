@@ -3,6 +3,7 @@ package com.secure.homefinitybackend.controller;
 import com.secure.homefinitybackend.dtos.ApiResponse;
 import com.secure.homefinitybackend.dtos.PropertyDTO;
 import com.secure.homefinitybackend.dtos.PropertyRequest;
+import com.secure.homefinitybackend.services.AuditLogService;
 import com.secure.homefinitybackend.services.PropertyService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,8 @@ import java.util.List;
 public class PropertyController {
     @Autowired
     PropertyService propertyService;
+    @Autowired
+    AuditLogService auditLogService;
 
     @PostMapping
     public ResponseEntity<ApiResponse<PropertyDTO>> createProperty(
@@ -32,9 +35,9 @@ public class PropertyController {
         
         String userName = userDetails.getUsername();
         log.info("Creating property for user: {}", userName);
-        
+
         PropertyDTO property = propertyService.createPropertyForUser(userName, request);
-        
+        auditLogService.logPropertyCreation(userName,property);
         return ResponseEntity
                 .status(HttpStatus.CREATED)
                 .body(ApiResponse.success("Property created successfully", property));
@@ -50,7 +53,7 @@ public class PropertyController {
         log.info("Updating property ID: {} for user: {}", propertyId, userName);
         
         PropertyDTO property = propertyService.updatePropertyForUser(propertyId, request, userName);
-        
+        auditLogService.logPropertyUpdate(userName,property);
         return ResponseEntity.ok(
                 ApiResponse.success("Property updated successfully", property)
         );
@@ -64,7 +67,6 @@ public class PropertyController {
         log.info("Getting properties for user: {}", userName);
         
         List<PropertyDTO> properties = propertyService.getPropertyByOwnerUserName(userName);
-        
         return ResponseEntity.ok(
                 ApiResponse.success(
                         String.format("Found %d properties", properties.size()),
@@ -97,7 +99,7 @@ public class PropertyController {
         log.info("Deleting property ID: {} for user: {}", propertyId, userName);
         
         propertyService.deletePropertyForUser(propertyId, userName);
-        
+        auditLogService.logPropertyDeletion(userName,propertyId);
         return ResponseEntity.ok(
                 ApiResponse.success("Property deleted successfully")
         );

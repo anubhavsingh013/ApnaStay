@@ -77,7 +77,7 @@ public class SecurityConfig {
         CorsConfiguration corsConfig = new CorsConfiguration();
         corsConfig.setAllowedOrigins(Arrays.asList(
                 "http://localhost:3000","http://localhost:5173",
-                "https://noteworthy2fa.netlify.app",
+                "https://homefinity.netlify.app",
                 frontendUrl  // Keep this for other environments
         ));
         corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
