@@ -32,8 +32,8 @@ public class Property {
     @NotBlank(message = "Description is required")
     private String description;
     
-    @Column(nullable = false)
     @Enumerated(EnumType.STRING)
+    @Column(name = "property_type", length = 20,nullable = false)
     private PropertyType propertyType;
     
     @Column(nullable = false, precision = 15, scale = 2)

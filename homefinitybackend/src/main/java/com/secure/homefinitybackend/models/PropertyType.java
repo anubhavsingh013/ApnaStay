@@ -5,5 +5,7 @@ public enum PropertyType {
     HOUSE,
     VILLA,
     PLOT,
-    COMMERCIAL
+    COMMERCIAL,
+    FLAT,
+    PG
 }
