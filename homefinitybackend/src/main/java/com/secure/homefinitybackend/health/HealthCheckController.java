@@ -1,4 +1,4 @@
-package com.secure.homefinitybackend.controller;
+package com.secure.homefinitybackend.health;
 
 import com.secure.homefinitybackend.dtos.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
