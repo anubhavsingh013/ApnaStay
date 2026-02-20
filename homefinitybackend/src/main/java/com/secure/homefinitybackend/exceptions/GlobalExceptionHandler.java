@@ -1,5 +1,6 @@
 package com.secure.homefinitybackend.exceptions;
 
+import com.secure.homefinitybackend.dtos.ApiResponse;
 import com.secure.homefinitybackend.dtos.ErrorResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -22,6 +23,21 @@ import java.util.stream.Collectors;
 @RestControllerAdvice
 @Slf4j
 public class GlobalExceptionHandler {
+
+    @ExceptionHandler(EmailServiceException.class)
+    public ResponseEntity<ApiResponse> handleEmailServiceException(EmailServiceException ex) {
+        log.error("Failed to send password reset email");
+        log.debug("Email service error - Type: {}, Recipient: {}, Message: {}",
+                ex.getEmailType(), ex.getRecipientEmail(), ex.getMessage());
+
+        ApiResponse response = new ApiResponse(
+                false,
+                "Failed to send password reset email.",
+                LocalDateTime.now()
+        );
+
+        return new ResponseEntity<>(response, HttpStatus.SERVICE_UNAVAILABLE);
+    }
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleResourceNotFoundException(

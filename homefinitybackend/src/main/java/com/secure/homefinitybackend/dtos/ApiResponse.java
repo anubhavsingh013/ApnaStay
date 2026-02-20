@@ -21,7 +21,13 @@ public class ApiResponse<T> {
     private LocalDateTime timestamp;
     
     private T data;
-    
+
+    public ApiResponse(boolean b, String s, LocalDateTime now) {
+        this.success = b;
+        this.message = s;
+        this.timestamp = now;
+    }
+
     public static <T> ApiResponse<T> success(String message, T data) {
         return ApiResponse.<T>builder()
                 .success(true)

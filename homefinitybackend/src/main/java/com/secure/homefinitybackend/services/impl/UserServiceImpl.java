@@ -1,19 +1,17 @@
 package com.secure.homefinitybackend.services.impl;
 
-
 import com.secure.homefinitybackend.dtos.UserDTO;
+import com.secure.homefinitybackend.exceptions.BadRequestException;
 import com.secure.homefinitybackend.exceptions.ResourceNotFoundException;
 import com.secure.homefinitybackend.models.AppRole;
-//import com.secure.homefinitybackend.models.PasswordResetToken;
+import com.secure.homefinitybackend.models.PasswordResetToken;
 import com.secure.homefinitybackend.models.Role;
 import com.secure.homefinitybackend.models.User;
-//import com.secure.homefinitybackend.repositories.PasswordResetTokenRepository;
+import com.secure.homefinitybackend.repositories.PaswordResetTokenRepository;
 import com.secure.homefinitybackend.repositories.RoleRepository;
 import com.secure.homefinitybackend.repositories.UserRepository;
-//import com.secure.homefinitybackend.services.TotpService;
 import com.secure.homefinitybackend.services.UserService;
-//import com.secure.homefinitybackend.util.EmailService;
-//import com.warrenstrange.googleauth.GoogleAuthenticatorKey;
+import com.secure.homefinitybackend.utils.EmailService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,8 +27,8 @@ import java.util.UUID;
 @Service
 @Slf4j
 public class UserServiceImpl implements UserService {
-//    @Value("${frontend.url}")
-//    String frontendUrl;
+    @Value("${frontend.url}")
+    String frontendUrl;
 
     @Autowired
     UserRepository userRepository;
@@ -41,11 +39,11 @@ public class UserServiceImpl implements UserService {
     @Autowired
     PasswordEncoder passwordEncoder;
 
-//    @Autowired
-//    PasswordResetTokenRepository passwordResetTokenRepository;
-//
-//    @Autowired
-//    EmailService emailService;
+    @Autowired
+    PaswordResetTokenRepository passwordResetTokenRepository;
+
+    @Autowired
+    EmailService emailService;
 //
 //    @Autowired
 //    TotpService totpService;
@@ -54,11 +52,9 @@ public class UserServiceImpl implements UserService {
     @Override
     public void updateUserRole(Long userId, String roleName) {
         User user = userRepository.findById(userId)
-//                .orElseThrow(() -> new RuntimeException("User not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
         AppRole appRole = AppRole.valueOf(roleName);
         Role role = roleRepository.findByRoleName(appRole)
-//                .orElseThrow(() -> new RuntimeException("Role not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("Role", "name", roleName));
         user.setRole(role);
         userRepository.save(user);
@@ -74,7 +70,6 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserDTO getUserById(Long id) {
-//        return userRepository.findById(id).orElseThrow();
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", id));
         return convertToDto(user);
@@ -84,7 +79,6 @@ public class UserServiceImpl implements UserService {
     public User findByUsername(String username) {
         Optional<User> user = userRepository.findByUserName(username);
         return user
-//                .orElseThrow(() -> new RuntimeException("User not found with username: " + username));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "username", username));
     }
 
@@ -110,7 +104,6 @@ public class UserServiceImpl implements UserService {
     @Override
     public void updateAccountLockStatus(Long userId, boolean lock) {
         User user = userRepository.findById(userId)
-//                .orElseThrow(() -> new RuntimeException("User not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
         user.setAccountNonLocked(!lock);
         userRepository.save(user);
@@ -124,23 +117,17 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public void updatePassword(Long userId, String password) {
-//        try {
             User user = userRepository.findById(userId)
-//                    .orElseThrow(() -> new RuntimeException("User not found"));
                     .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
             user.setPassword(passwordEncoder.encode(password));
             userRepository.save(user);
             log.info("Password updated successfully for user {}", userId);
-//        } catch (Exception e) {
-//            throw new RuntimeException("Failed to update password");
-//        }
     }
 
 
     @Override
     public void updateAccountExpiryStatus(Long userId, boolean expire) {
         User user = userRepository.findById(userId)
-//                .orElseThrow(()-> new RuntimeException("User not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
         user.setAccountNonExpired(!expire);
         userRepository.save(user);
@@ -150,7 +137,6 @@ public class UserServiceImpl implements UserService {
     @Override
     public void updateAccountEnabledStatus(Long userId, boolean enabled) {
         User user = userRepository.findById(userId)
-//                .orElseThrow(()-> new RuntimeException("User not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
         user.setEnabled(enabled);
         userRepository.save(user);
@@ -160,28 +146,34 @@ public class UserServiceImpl implements UserService {
     @Override
     public void updateCredentialsExpiryStatus(Long userId, boolean expire) {
         User user = userRepository.findById(userId)
-//                .orElseThrow(()-> new RuntimeException("User not found"));
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", userId));
         user.setCredentialsNonExpired(!expire);
         userRepository.save(user);
         log.info("Updated credentials expiry status for user {} to {}", userId, expire);
     }
 
-//    @Override
-//    public void generatePasswordResetToken(String email){
-//        User user = userRepository.findByEmail(email).orElseThrow(() -> new RuntimeException("User not found with email: " + email));
-//
-//        String token = UUID.randomUUID().toString();
-//        Instant expiryDate= Instant.now().plus(24, ChronoUnit.HOURS);
-//        PasswordResetToken passwordResetToken = new PasswordResetToken(token, expiryDate, user);
-//        passwordResetTokenRepository.save(passwordResetToken);
-//
-//        String resetUrl = frontendUrl + "/reset-password?token=" + token;
-//        // send email to user
-//        emailService.sendPasswordResetEmail(user.getEmail(), resetUrl);
-//
-//    }
-//
+    @Override
+    public void generatePasswordResetToken(String email){
+        User user = userRepository.findByEmail(email).
+                orElseThrow(()-> new BadRequestException("User not found with email: "+email));
+
+        String token = UUID.randomUUID().toString();
+        Instant expiryDate= Instant.now().plus(24, ChronoUnit.HOURS);
+        PasswordResetToken passwordResetToken = new PasswordResetToken(token, expiryDate, user);
+        passwordResetTokenRepository.save(passwordResetToken);
+
+        String resetUrl = frontendUrl + "/reset-password?token=" + token;
+        // send email to user
+        try{
+            emailService.sendPasswordResetEmail(user.getEmail(), resetUrl);
+            log.info("Password ResetEmail send successfully");
+        } catch (Exception ex){
+            log.debug("Failed to send password reset email to: {}", email);
+            throw ex;
+        }
+
+    }
+
 //    @Override
 //    public void resetPassword(String token, String newPassword) { // update the password in the database
 //        // toke should not be expired

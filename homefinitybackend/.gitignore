@@ -32,3 +32,10 @@ build/
 
 ### VS Code ###
 .vscode/
+
+
+### Other ###
+target/
+node_modules/
+.env
+plan/plan.md

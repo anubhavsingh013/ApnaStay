@@ -211,18 +211,12 @@ public class AuthController {
         return (userDetails!=null) ? ApiResponse.success("Username fetched successfully",userDetails.getUsername()): ApiResponse.error("no user exists");
     }
 
-//    @PostMapping("/public/forgot-password")
-//    public ResponseEntity<?> forgotPassword(@RequestParam String email){
-//        try{
-//            userService.generatePasswordResetToken(email);
-//            return ResponseEntity.ok(new MessageResponse("Password reset email sent!"));
-//        }
-//        catch (Exception e) {
-//            e.printStackTrace();
-//            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new MessageResponse("Error sending password reset email"));
-//        }
-//    }
-//
+    @PostMapping("/public/forgot-password")
+    public ResponseEntity<?> forgotPassword(@RequestParam String email){
+            userService.generatePasswordResetToken(email);
+            return ResponseEntity.ok(ApiResponse.success("Password reset email sent!"));
+    }
+
 //    @PostMapping("/public/reset-password")
 //    public ResponseEntity<?> resetPassword(@RequestParam String token, @RequestParam String newPassword){
 //        try{
