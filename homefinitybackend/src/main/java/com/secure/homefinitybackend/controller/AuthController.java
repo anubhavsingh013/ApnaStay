@@ -1,6 +1,8 @@
 package com.secure.homefinitybackend.controller;
 
 import com.secure.homefinitybackend.dtos.ApiResponse;
+import com.secure.homefinitybackend.dtos.PhoneLoginRequest;
+import com.secure.homefinitybackend.dtos.PhoneVerificationRequest;
 import com.secure.homefinitybackend.exceptions.BadRequestException;
 import com.secure.homefinitybackend.exceptions.ResourceNotFoundException;
 import com.secure.homefinitybackend.models.AppRole;
@@ -15,6 +17,7 @@ import com.secure.homefinitybackend.security.response.LoginResponse;
 import com.secure.homefinitybackend.security.response.UserInfoResponse;
 import com.secure.homefinitybackend.security.services.UserDetailsImpl;
 //import com.secure.homefinitybackend.services.TotpService;
+import com.secure.homefinitybackend.services.PhoneAuthService;
 import com.secure.homefinitybackend.services.UserService;
 //import com.secure.homefinitybackend.util.AuthUtil;
 //import com.warrenstrange.googleauth.GoogleAuthenticatorKey;
@@ -58,6 +61,8 @@ public class AuthController {
     RoleRepository roleRepository;
     @Autowired
     PasswordEncoder encoder;
+    @Autowired
+    PhoneAuthService phoneAuthService;
 //    @Autowired
 //    AuthUtil authUtil;
 
@@ -68,12 +73,12 @@ public class AuthController {
     public ResponseEntity<?> authenticateUser(@RequestBody LoginRequest loginRequest) {
         Authentication authentication;
         try {
-            // The username field can now contain username, email, or phone number
             authentication = authenticationManager
                     .authenticate(new UsernamePasswordAuthenticationToken(
-                            loginRequest.getUsername(), 
+                            loginRequest.getUsername(),
                             loginRequest.getPassword()));
         } catch (AuthenticationException exception) {
+            exception.printStackTrace();
             Map<String, Object> map = new HashMap<>();
             map.put("message", "Bad credentials");
             map.put("status", false);
@@ -179,6 +184,105 @@ public class AuthController {
                             signUpRequest.getPhoneNumber();
 
         return ResponseEntity.ok(ApiResponse.success("User registered successfully", identifier));
+    }
+
+    @PostMapping("/public/phone/send-code")
+    public ResponseEntity<?> sendPhoneVerificationCode(@RequestBody PhoneVerificationRequest request) {
+        try {
+            // Validate phone number format (basic validation)
+            if (request.getPhoneNumber() == null || request.getPhoneNumber().isEmpty()) {
+                return ResponseEntity.badRequest()
+                        .body(ApiResponse.error("Phone number is required"));
+            }
+
+            boolean sent = phoneAuthService.sendVerificationCode(request.getPhoneNumber());
+
+            if (sent) {
+                return ResponseEntity.ok(
+                        ApiResponse.success("Verification code sent successfully to " + request.getPhoneNumber())
+                );
+            } else {
+                return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                        .body(ApiResponse.error("Failed to send verification code"));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error sending verification code: " + e.getMessage()));
+        }
+    }
+
+    // Step 2: Verify code and login/signup
+    @PostMapping("/public/phone/verify-and-login")
+    public ResponseEntity<?> phoneVerifyAndLogin(@RequestBody PhoneLoginRequest phoneLoginRequest) {
+        try {
+            String phoneE164 = phoneAuthService.normalizeToE164(phoneLoginRequest.getPhoneNumber());
+            if (phoneE164 == null || phoneE164.isBlank()) {
+                return ResponseEntity.badRequest().body(ApiResponse.error("Phone number is required"));
+            }
+
+            // Verify the code with Twilio (same E.164 used for send and verify)
+            boolean verified = phoneAuthService.verifyCode(phoneE164, phoneLoginRequest.getVerificationCode());
+
+            if (!verified) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(ApiResponse.error("Invalid or expired verification code"));
+            }
+
+            // Look up user by E.164 so it matches how we store it
+            User user = userRepository.findByPhoneNumber(phoneE164)
+                    .orElse(null);
+
+            if (user == null) {
+                String username = "user_" + phoneE164.replaceAll("[^0-9]", "");
+
+                if (userRepository.existsByUserName(username)) {
+                    username = username + "_" + System.currentTimeMillis();
+                }
+
+                user = new User();
+                user.setUserName(username);
+                user.setPhoneNumber(phoneE164);
+                user.setPhoneVerified(true);
+                user.setSignUpMethod("phone");
+                user.setPassword(encoder.encode(phoneE164 + System.currentTimeMillis()));
+
+                Role userRole = roleRepository.findByRoleName(AppRole.ROLE_USER)
+                        .orElseThrow(() -> new ResourceNotFoundException("Role", "name", "user"));
+
+                user.setRole(userRole);
+                user.setAccountNonLocked(true);
+                user.setAccountNonExpired(true);
+                user.setCredentialsNonExpired(true);
+                user.setEnabled(true);
+                user.setCredentialsExpiryDate(LocalDate.now().plusYears(10));
+                user.setAccountExpiryDate(LocalDate.now().plusYears(10));
+                user.setTwoFactorEnabled(false);
+
+                userRepository.save(user);
+            } else {
+                // Update phone verification status for existing user
+                if (!user.isPhoneVerified()) {
+                    user.setPhoneVerified(true);
+                    userRepository.save(user);
+                }
+            }
+
+            // Generate JWT token
+            UserDetailsImpl userDetails = UserDetailsImpl.build(user);
+            String jwtToken = jwtUtils.generateTokenFromUsername(userDetails);
+
+            List<String> roles = userDetails.getAuthorities().stream()
+                    .map(item -> item.getAuthority())
+                    .collect(Collectors.toList());
+
+            LoginResponse response = new LoginResponse(user.getUserName(), roles, jwtToken);
+
+            return ResponseEntity.ok(response);
+
+        } catch (Exception e) {
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error during phone authentication: " + e.getMessage()));
+        }
     }
 
     @GetMapping("/user")
