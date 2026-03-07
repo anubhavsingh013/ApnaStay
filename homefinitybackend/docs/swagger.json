@@ -1,0 +1,950 @@
+  {
+    "openapi": "3.0.3",
+    "info": {
+      "title": "HomeFinity Backend API",
+      "description": "API for HomeFinity frontend.\n\n**Required headers for protected endpoints:**\n- **Authorization** (mandatory): `Authorization: Bearer <JWT>` — JWT from POST /api/auth/public/signin or POST /api/auth/public/phone/verify-and-login.\n- **X-XSRF-TOKEN** (mandatory): CSRF token from GET /api/csrf-token.\n\n**Required header for requests with body (POST/PUT):**\n- **Content-Type** (mandatory): `Content-Type: application/json`.\n\nPublic endpoints (signin, signup, phone send-code, phone verify-and-login, csrf-token, health-check) do not require Authorization or X-XSRF-TOKEN.",
+      "version": "0.2.0"
+    },
+    "servers": [
+      {
+        "url": "/",
+        "description": "Relative to deployed base URL"
+      }
+    ],
+    "tags": [
+      { "name": "Auth", "description": "Authentication and user session" },
+      { "name": "CSRF", "description": "CSRF token for secure requests" },
+      { "name": "Health", "description": "Health check" },
+      { "name": "Property", "description": "Property CRUD (owner-scoped)" },
+      { "name": "Admin", "description": "Admin-only user management" }
+    ],
+    "security": [
+      {
+        "bearerAuth": [],
+        "csrfHeader": []
+      }
+    ],
+    "paths": {
+      "/api/csrf-token": {
+        "get": {
+          "tags": ["CSRF"],
+          "summary": "Get CSRF token",
+          "description": "Returns the CSRF token to be sent in subsequent requests. **No Authorization or CSRF header required.** Typically call this first, then send the token in the header (e.g. X-XSRF-TOKEN or header name returned here).",
+          "operationId": "getCsrfToken",
+          "security": [],
+          "responses": {
+            "200": {
+              "description": "CSRF token object",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/CsrfToken" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/health-check": {
+        "get": {
+          "tags": ["Health"],
+          "summary": "Health check",
+          "description": "Server health check. **No Authorization or CSRF header required.**",
+          "operationId": "healthCheck",
+          "security": [],
+          "responses": {
+            "200": {
+              "description": "Health check successful",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseDateTime" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/auth/public/signin": {
+        "post": {
+          "tags": ["Auth"],
+          "summary": "Sign in",
+          "description": "Authenticate and receive JWT. No Authorization or X-XSRF-TOKEN required. Content-Type: application/json required (request body).",
+          "operationId": "signin",
+          "security": [],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/LoginRequest" }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Login successful",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/LoginResponse" }
+                }
+              }
+            },
+            "404": {
+              "description": "Bad credentials",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "message": { "type": "string", "example": "Bad credentials" },
+                      "status": { "type": "boolean", "example": false }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/auth/public/signup": {
+        "post": {
+          "tags": ["Auth"],
+          "summary": "Sign up",
+          "description": "Register a new user. No Authorization or X-XSRF-TOKEN required. Content-Type: application/json required (request body).",
+          "operationId": "signup",
+          "security": [],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/SignupRequest" }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "User registered successfully",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                }
+              }
+            },
+            "400": {
+              "description": "Validation error or username/email/phone already taken",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/MessageResponse" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/auth/public/phone/send-code": {
+        "post": {
+          "tags": ["Auth"],
+          "summary": "Send phone verification code (OTP)",
+          "description": "Send a verification code via SMS to the given phone number. Use this as step 1 before phone login or phone signup. No Authorization or X-XSRF-TOKEN required.",
+          "operationId": "sendPhoneVerificationCode",
+          "security": [],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PhoneVerificationRequest" }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Verification code sent successfully",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseMessage" }
+                }
+              }
+            },
+            "400": {
+              "description": "Phone number is required or invalid",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseError" }
+                }
+              }
+            },
+            "500": {
+              "description": "Failed to send verification code",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseError" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/auth/public/phone/verify-and-login": {
+        "post": {
+          "tags": ["Auth"],
+          "summary": "Verify OTP and login or sign up (phone)",
+          "description": "Verify the OTP sent to the phone number. If user exists, logs in; otherwise creates a new user (phone signup) and returns JWT. No Authorization or X-XSRF-TOKEN required.",
+          "operationId": "phoneVerifyAndLogin",
+          "security": [],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PhoneLoginRequest" }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Login/signup successful; returns JWT and user info",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/LoginResponse" }
+                }
+              }
+            },
+            "400": {
+              "description": "Phone number is required or invalid",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseError" }
+                }
+              }
+            },
+            "401": {
+              "description": "Invalid or expired verification code",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseError" }
+                }
+              }
+            },
+            "500": {
+              "description": "Error during phone authentication",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseError" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "/api/auth/user": {
+        "get": {
+          "tags": ["Auth"],
+          "summary": "Get current user details",
+          "description": "Returns the authenticated user's profile. Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getUserDetails",
+"parameters": [
+          { "$ref": "#/components/parameters/XsrfTokenHeader" }
+        ],
+        "responses": {
+          "200": {
+            "description": "User details",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseUserInfo" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" }
+          }
+        }
+      },
+      "/api/auth/username": {
+        "get": {
+          "tags": ["Auth"],
+          "summary": "Get current username",
+          "description": "Returns the authenticated user's username. Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getUsername",
+"parameters": [
+          { "$ref": "#/components/parameters/XsrfTokenHeader" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Username or error",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "success": { "type": "boolean" },
+                      "message": { "type": "string" },
+                      "timestamp": { "type": "string", "format": "date-time" },
+                      "data": { "type": "string", "description": "Username when success is true" }
+                    }
+                  }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" }
+          }
+        }
+      },
+      "/api/property": {
+        "get": {
+          "tags": ["Property"],
+          "summary": "List properties by owner",
+          "description": "Returns all properties owned by the authenticated user. Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getPropertiesByOwner",
+"parameters": [
+          { "$ref": "#/components/parameters/XsrfTokenHeader" }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of properties",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponsePropertyList" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" }
+          }
+        },
+        "post": {
+          "tags": ["Property"],
+          "summary": "Create property",
+          "description": "Create a new property for the authenticated user. Requires Authorization, X-XSRF-TOKEN, and Content-Type (mandatory).",
+          "operationId": "createProperty",
+"parameters": [
+          { "$ref": "#/components/parameters/XsrfTokenHeader" }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PropertyRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Property created",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseProperty" }
+                }
+              }
+            },
+            "400": { "description": "Validation error" },
+            "401": { "description": "Unauthorized" }
+          }
+        }
+      },
+      "/api/property/{propertyId}": {
+        "get": {
+          "tags": ["Property"],
+          "summary": "Get property by ID",
+          "description": "Get a single property by ID (must be owned by the authenticated user). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getPropertyById",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            {
+              "name": "propertyId",
+              "in": "path",
+              "required": true,
+              "schema": { "type": "integer", "format": "int64" }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Property details",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseProperty" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "404": { "description": "Property not found or not owned by user" }
+          }
+        },
+        "put": {
+          "tags": ["Property"],
+          "summary": "Update property",
+          "description": "Update an existing property (must be owned by the authenticated user). Requires Authorization, X-XSRF-TOKEN, and Content-Type (mandatory).",
+          "operationId": "updateProperty",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            {
+              "name": "propertyId",
+              "in": "path",
+              "required": true,
+              "schema": { "type": "integer", "format": "int64" }
+            }
+          ],
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PropertyRequest" }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Property updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseProperty" }
+                }
+              }
+            },
+            "400": { "description": "Validation error" },
+            "401": { "description": "Unauthorized" },
+            "404": { "description": "Property not found or not owned by user" }
+          }
+        },
+        "delete": {
+          "tags": ["Property"],
+          "summary": "Delete property",
+          "description": "Delete a property (must be owned by the authenticated user). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "deleteProperty",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            {
+              "name": "propertyId",
+              "in": "path",
+              "required": true,
+              "schema": { "type": "integer", "format": "int64" }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "Property deleted",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "404": { "description": "Property not found or not owned by user" }
+          }
+        }
+      },
+      "/api/admin/getusers": {
+        "get": {
+          "tags": ["Admin"],
+          "summary": "Get all users",
+          "description": "Returns all users (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getAllUsers",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" }
+          ],
+          "responses": {
+            "200": {
+              "description": "List of users",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseUserList" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden - admin only" }
+          }
+        }
+      },
+      "/api/admin/user/{id}": {
+        "get": {
+          "tags": ["Admin"],
+          "summary": "Get user by ID",
+          "description": "Returns a user by ID (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getUserById",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            {
+              "name": "id",
+              "in": "path",
+              "required": true,
+              "schema": { "type": "integer", "format": "int64" }
+            }
+          ],
+          "responses": {
+            "200": {
+              "description": "User details",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseUserDTO" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" },
+            "404": { "description": "User not found" }
+          }
+        }
+      },
+      "/api/admin/roles": {
+        "get": {
+          "tags": ["Admin"],
+          "summary": "Get all roles",
+          "description": "Returns all roles (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "getAllRoles",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" }
+          ],
+          "responses": {
+            "200": {
+              "description": "List of roles",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseRoleList" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-role": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update user role",
+          "description": "Update a user's role (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updateUserRole",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "roleName", "in": "query", "required": true, "schema": { "type": "string", "example": "admin" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Role updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-lock-status": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update account lock status",
+          "description": "Lock or unlock a user account (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updateAccountLockStatus",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "lock", "in": "query", "required": true, "schema": { "type": "boolean" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Lock status updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-expiry-status": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update account expiry status",
+          "description": "Set account expired or not (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updateAccountExpiryStatus",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "expire", "in": "query", "required": true, "schema": { "type": "boolean" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Expiry status updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-enabled-status": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update account enabled status",
+          "description": "Enable or disable a user account (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updateAccountEnabledStatus",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "enabled", "in": "query", "required": true, "schema": { "type": "boolean" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Enabled status updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-credentials-expiry-status": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update credentials expiry status",
+          "description": "Set credentials expired or not (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updateCredentialsExpiryStatus",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "expire", "in": "query", "required": true, "schema": { "type": "boolean" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Credentials expiry status updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      },
+      "/api/admin/update-password": {
+        "put": {
+          "tags": ["Admin"],
+          "summary": "Update user password",
+          "description": "Set a new password for a user (admin only). Requires Authorization and X-XSRF-TOKEN (mandatory).",
+          "operationId": "updatePassword",
+          "parameters": [
+            { "$ref": "#/components/parameters/XsrfTokenHeader" },
+            { "name": "userId", "in": "query", "required": true, "schema": { "type": "integer", "format": "int64" } },
+            { "name": "password", "in": "query", "required": true, "schema": { "type": "string" } }
+          ],
+          "responses": {
+            "200": {
+              "description": "Password updated",
+              "content": {
+                "application/json": {
+                  "schema": { "$ref": "#/components/schemas/ApiResponseVoid" }
+                }
+              }
+            },
+            "401": { "description": "Unauthorized" },
+            "403": { "description": "Forbidden" }
+          }
+        }
+      }
+    },
+    "components": {
+      "parameters": {
+        "XsrfTokenHeader": {
+          "in": "header",
+          "name": "X-XSRF-TOKEN",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "description": "CSRF token from GET /api/csrf-token (use the token value from response)"
+          },
+          "description": "**Mandatory** for all protected endpoints. Obtain token from GET /api/csrf-token. Authorization is defined via securitySchemes (Bearer JWT). Content-Type is defined by requestBody.content for operations with a body."
+        }
+      },
+      "securitySchemes": {
+        "bearerAuth": {
+          "type": "http",
+          "scheme": "bearer",
+          "bearerFormat": "JWT",
+          "description": "JWT token from /api/auth/public/signin. Send as: Authorization: Bearer <token>"
+        },
+        "csrfHeader": {
+          "type": "apiKey",
+          "in": "header",
+          "name": "X-XSRF-TOKEN",
+          "description": "CSRF token from GET /api/csrf-token. Use the header name returned by that endpoint (e.g. X-XSRF-TOKEN) and the token value. Required for state-changing requests and optionally for GETs when cookies are used."
+        }
+      },
+      "schemas": {
+        "CsrfToken": {
+          "type": "object",
+          "description": "Spring CSRF token; use headerName and token in subsequent requests",
+          "properties": {
+            "token": { "type": "string" },
+            "headerName": { "type": "string", "example": "X-XSRF-TOKEN" },
+            "parameterName": { "type": "string" }
+          }
+        },
+        "LoginRequest": {
+          "type": "object",
+          "required": ["username", "password"],
+          "properties": {
+            "username": { "type": "string" },
+            "password": { "type": "string" }
+          }
+        },
+        "SignupRequest": {
+          "type": "object",
+          "required": ["username", "password"],
+          "properties": {
+            "username": { "type": "string", "minLength": 3, "maxLength": 20 },
+            "email": { "type": "string", "format": "email", "maxLength": 50, "description": "Optional; either email or phoneNumber must be provided" },
+            "phoneNumber": { "type": "string", "pattern": "^[+]?[0-9]{10,15}$", "description": "Optional; either email or phoneNumber must be provided. 10-15 digits, may start with +" },
+            "password": { "type": "string", "minLength": 6, "maxLength": 40 },
+            "role": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Optional, e.g. [\"admin\"], [\"owner\"], [\"broker\"] or [\"user\"]"
+            }
+          },
+          "description": "At least one of email or phoneNumber must be provided."
+        },
+        "PhoneVerificationRequest": {
+          "type": "object",
+          "required": ["phoneNumber"],
+          "properties": {
+            "phoneNumber": { "type": "string", "description": "Phone number to send OTP to (national or E.164 format)" }
+          }
+        },
+        "PhoneLoginRequest": {
+          "type": "object",
+          "required": ["phoneNumber", "verificationCode"],
+          "properties": {
+            "phoneNumber": { "type": "string", "description": "Same phone number used in send-code" },
+            "verificationCode": { "type": "string", "description": "OTP received via SMS" }
+          }
+        },
+        "ApiResponseMessage": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "string", "nullable": true }
+          }
+        },
+        "ApiResponseError": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" }
+          }
+        },
+        "LoginResponse": {
+          "type": "object",
+          "properties": {
+            "username": { "type": "string" },
+            "roles": { "type": "array", "items": { "type": "string" } },
+            "jwtToken": { "type": "string" }
+          }
+        },
+        "MessageResponse": {
+          "type": "object",
+          "properties": {
+            "message": { "type": "string" }
+          }
+        },
+        "UserInfoResponse": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "format": "int64" },
+            "username": { "type": "string" },
+            "email": { "type": "string" },
+            "accountNonLocked": { "type": "boolean" },
+            "accountNonExpired": { "type": "boolean" },
+            "credentialsNonExpired": { "type": "boolean" },
+            "enabled": { "type": "boolean" },
+            "credentialsExpiryDate": { "type": "string", "format": "date" },
+            "accountExpiryDate": { "type": "string", "format": "date" },
+            "isTwoFactorEnabled": { "type": "boolean" },
+            "roles": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "ApiResponseUserInfo": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "$ref": "#/components/schemas/UserInfoResponse" }
+          }
+        },
+        "ApiResponseDateTime": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "string", "format": "date-time" }
+          }
+        },
+        "ApiResponseVoid": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "object", "nullable": true }
+          }
+        },
+        "PropertyType": {
+          "type": "string",
+          "enum": ["APARTMENT", "HOUSE", "VILLA", "PLOT", "COMMERCIAL"]
+        },
+        "PropertyStatus": {
+          "type": "string",
+          "enum": ["AVAILABLE", "SOLD", "RENTED"]
+        },
+        "PropertyRequest": {
+          "type": "object",
+          "required": ["title", "description", "propertyType", "price", "address", "city", "state", "pinCode"],
+          "properties": {
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "propertyType": { "$ref": "#/components/schemas/PropertyType" },
+            "price": { "type": "number", "format": "decimal", "minimum": 0, "exclusiveMinimum": true },
+            "bedrooms": { "type": "integer", "minimum": 0 },
+            "bathrooms": { "type": "integer", "minimum": 0 },
+            "area": { "type": "number", "format": "decimal", "minimum": 0, "exclusiveMinimum": true },
+            "address": { "type": "string" },
+            "city": { "type": "string" },
+            "state": { "type": "string" },
+            "pinCode": { "type": "string", "pattern": "^[0-9]{6}$" },
+            "images": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "PropertyDTO": {
+          "type": "object",
+          "properties": {
+            "id": { "type": "integer", "format": "int64" },
+            "title": { "type": "string" },
+            "description": { "type": "string" },
+            "propertyType": { "$ref": "#/components/schemas/PropertyType" },
+            "price": { "type": "number" },
+            "bedrooms": { "type": "integer" },
+            "bathrooms": { "type": "integer" },
+            "area": { "type": "number" },
+            "address": { "type": "string" },
+            "city": { "type": "string" },
+            "state": { "type": "string" },
+            "pinCode": { "type": "string" },
+            "images": { "type": "array", "items": { "type": "string" } },
+            "ownerUserName": { "type": "string" },
+            "status": { "$ref": "#/components/schemas/PropertyStatus" },
+            "createdAt": { "type": "string", "format": "date-time" },
+            "updatedAt": { "type": "string", "format": "date-time" }
+          }
+        },
+        "ApiResponseProperty": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "$ref": "#/components/schemas/PropertyDTO" }
+          }
+        },
+        "ApiResponsePropertyList": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "array", "items": { "$ref": "#/components/schemas/PropertyDTO" } }
+          }
+        },
+        "Role": {
+          "type": "object",
+          "properties": {
+            "roleId": { "type": "integer" },
+            "roleName": { "type": "string", "enum": ["ROLE_ADMIN", "ROLE_OWNER", "ROLE_USER", "ROLE_BROKER"] }
+          }
+        },
+        "User": {
+          "type": "object",
+          "description": "User entity (password not included)",
+          "properties": {
+            "userId": { "type": "integer", "format": "int64" },
+            "userName": { "type": "string" },
+            "email": { "type": "string" },
+            "accountNonLocked": { "type": "boolean" },
+            "accountNonExpired": { "type": "boolean" },
+            "credentialsNonExpired": { "type": "boolean" },
+            "enabled": { "type": "boolean" },
+            "credentialsExpiryDate": { "type": "string", "format": "date" },
+            "accountExpiryDate": { "type": "string", "format": "date" },
+            "isTwoFactorEnabled": { "type": "boolean" },
+            "signUpMethod": { "type": "string" },
+            "role": { "$ref": "#/components/schemas/Role" },
+            "createdDate": { "type": "string", "format": "date-time" },
+            "updatedDate": { "type": "string", "format": "date-time" }
+          }
+        },
+        "UserDTO": {
+          "type": "object",
+          "properties": {
+            "userId": { "type": "integer", "format": "int64" },
+            "userName": { "type": "string" },
+            "email": { "type": "string" },
+            "accountNonLocked": { "type": "boolean" },
+            "accountNonExpired": { "type": "boolean" },
+            "credentialsNonExpired": { "type": "boolean" },
+            "enabled": { "type": "boolean" },
+            "credentialsExpiryDate": { "type": "string", "format": "date" },
+            "accountExpiryDate": { "type": "string", "format": "date" },
+            "twoFactorSecret": { "type": "string", "nullable": true },
+            "isTwoFactorEnabled": { "type": "boolean" },
+            "signUpMethod": { "type": "string" },
+            "role": { "$ref": "#/components/schemas/Role" },
+            "createdDate": { "type": "string", "format": "date-time" },
+            "updatedDate": { "type": "string", "format": "date-time" }
+          }
+        },
+        "ApiResponseUserList": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "array", "items": { "$ref": "#/components/schemas/User" } }
+          }
+        },
+        "ApiResponseUserDTO": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "$ref": "#/components/schemas/UserDTO" }
+          }
+        },
+        "ApiResponseRoleList": {
+          "type": "object",
+          "properties": {
+            "success": { "type": "boolean" },
+            "message": { "type": "string" },
+            "timestamp": { "type": "string", "format": "date-time" },
+            "data": { "type": "array", "items": { "$ref": "#/components/schemas/Role" } }
+          }
+        }
+      }
+    }
+  }
