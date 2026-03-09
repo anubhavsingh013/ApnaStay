@@ -57,11 +57,19 @@ public class PropertyServiceImpl implements PropertyService {
         property.setBedrooms(request.getBedrooms());
         property.setBathrooms(request.getBathrooms());
         property.setArea(request.getArea());
+        property.setRating(request.getRating() != null ? request.getRating() : 0.0);
+        property.setReviewCount(request.getReviewCount() != null ? request.getReviewCount() : 0);
+        property.setFurnishing(request.getFurnishing());
+        property.setAmenities(request.getAmenities() != null ? request.getAmenities() : new java.util.ArrayList<>());
+        property.setIsFeatured(request.getIsFeatured() != null ? request.getIsFeatured() : false);
+        property.setTenantUserName(request.getTenantUserName());
+        property.setLatitude(request.getLatitude());
+        property.setLongitude(request.getLongitude());
         property.setAddress(request.getAddress());
         property.setCity(request.getCity());
         property.setState(request.getState());
         property.setPinCode(request.getPinCode());
-        property.setImages(request.getImages());
+        property.setImages(request.getImages() != null ? request.getImages() : new java.util.ArrayList<>());
         property.setOwnerUserName(userName);
         property.setOwner(user);
         return property;
@@ -92,12 +100,20 @@ public class PropertyServiceImpl implements PropertyService {
         property.setBedrooms(request.getBedrooms());
         property.setBathrooms(request.getBathrooms());
         property.setArea(request.getArea());
+        if (request.getRating() != null) property.setRating(request.getRating());
+        if (request.getReviewCount() != null) property.setReviewCount(request.getReviewCount());
+        property.setFurnishing(request.getFurnishing());
+        if (request.getAmenities() != null) property.setAmenities(request.getAmenities());
+        if (request.getIsFeatured() != null) property.setIsFeatured(request.getIsFeatured());
+        property.setTenantUserName(request.getTenantUserName());
+        property.setLatitude(request.getLatitude());
+        property.setLongitude(request.getLongitude());
         property.setAddress(request.getAddress());
         property.setCity(request.getCity());
         property.setState(request.getState());
         property.setPinCode(request.getPinCode());
-        property.setImages(request.getImages());
-        
+        if (request.getImages() != null) property.setImages(request.getImages());
+
         Property updatedProperty = propertyRepository.save(property);
         
         log.info("Property ID: {} updated successfully for user: {}", propertyId, userName);
@@ -175,6 +191,14 @@ public class PropertyServiceImpl implements PropertyService {
         dto.setBedrooms(property.getBedrooms());
         dto.setBathrooms(property.getBathrooms());
         dto.setArea(property.getArea());
+        dto.setRating(property.getRating());
+        dto.setReviewCount(property.getReviewCount());
+        dto.setFurnishing(property.getFurnishing());
+        dto.setAmenities(property.getAmenities());
+        dto.setIsFeatured(property.getIsFeatured());
+        dto.setTenantUserName(property.getTenantUserName());
+        dto.setLatitude(property.getLatitude());
+        dto.setLongitude(property.getLongitude());
         dto.setAddress(property.getAddress());
         dto.setCity(property.getCity());
         dto.setState(property.getState());

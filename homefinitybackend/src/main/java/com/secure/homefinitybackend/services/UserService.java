@@ -15,6 +15,8 @@ public interface UserService {
 
     List<User> getAllUsers();
 
+    List<UserDTO> getAllUserDtos();
+
     UserDTO getUserById(Long id);
 
     User findByUsername(String username);
@@ -32,8 +34,8 @@ public interface UserService {
     void updateCredentialsExpiryStatus(Long userId, boolean expire);
 
     void generatePasswordResetToken(String email);
-//
-//    void resetPassword(String token, String newPassword);
+
+    void resetPassword(String token, String newPassword);
 //
 //    Optional<User> findByEmail(String email);
 //

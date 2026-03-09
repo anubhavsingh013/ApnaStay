@@ -14,7 +14,7 @@
     "tags": [
       { "name": "Auth", "description": "Authentication and user session" },
       { "name": "CSRF", "description": "CSRF token for secure requests" },
-      { "name": "Health", "description": "Health check" },
+      { "name": "Health", "description": "HealthphoneVerified check" },
       { "name": "Property", "description": "Property CRUD (owner-scoped)" },
       { "name": "Admin", "description": "Admin-only user management" }
     ],
@@ -807,11 +807,15 @@
         },
         "PropertyType": {
           "type": "string",
-          "enum": ["APARTMENT", "HOUSE", "VILLA", "PLOT", "COMMERCIAL"]
+          "enum": ["APARTMENT", "HOUSE", "VILLA", "PLOT", "COMMERCIAL", "FLAT", "PG"]
         },
         "PropertyStatus": {
           "type": "string",
           "enum": ["AVAILABLE", "SOLD", "RENTED"]
+        },
+        "FurnishingType": {
+          "type": "string",
+          "enum": ["FURNISHED", "SEMI_FURNISHED", "UNFURNISHED"]
         },
         "PropertyRequest": {
           "type": "object",
@@ -824,6 +828,14 @@
             "bedrooms": { "type": "integer", "minimum": 0 },
             "bathrooms": { "type": "integer", "minimum": 0 },
             "area": { "type": "number", "format": "decimal", "minimum": 0, "exclusiveMinimum": true },
+            "rating": { "type": "number", "format": "double", "minimum": 0, "maximum": 5 },
+            "reviewCount": { "type": "integer", "minimum": 0 },
+            "furnishing": { "$ref": "#/components/schemas/FurnishingType" },
+            "amenities": { "type": "array", "items": { "type": "string" } },
+            "isFeatured": { "type": "boolean" },
+            "tenantUserName": { "type": "string" },
+            "latitude": { "type": "number", "format": "double" },
+            "longitude": { "type": "number", "format": "double" },
             "address": { "type": "string" },
             "city": { "type": "string" },
             "state": { "type": "string" },
@@ -842,6 +854,14 @@
             "bedrooms": { "type": "integer" },
             "bathrooms": { "type": "integer" },
             "area": { "type": "number" },
+            "rating": { "type": "number", "format": "double" },
+            "reviewCount": { "type": "integer" },
+            "furnishing": { "$ref": "#/components/schemas/FurnishingType" },
+            "amenities": { "type": "array", "items": { "type": "string" } },
+            "isFeatured": { "type": "boolean" },
+            "tenantUserName": { "type": "string" },
+            "latitude": { "type": "number", "format": "double" },
+            "longitude": { "type": "number", "format": "double" },
             "address": { "type": "string" },
             "city": { "type": "string" },
             "state": { "type": "string" },

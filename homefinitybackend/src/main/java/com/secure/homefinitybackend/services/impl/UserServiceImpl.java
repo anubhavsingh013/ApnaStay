@@ -67,6 +67,12 @@ public class UserServiceImpl implements UserService {
         return userRepository.findAll();
     }
 
+    @Override
+    public List<UserDTO> getAllUserDtos() {
+        return userRepository.findAll().stream()
+                .map(this::convertToDto)
+                .toList();
+    }
 
     @Override
     public UserDTO getUserById(Long id) {
@@ -87,6 +93,8 @@ public class UserServiceImpl implements UserService {
                 user.getUserId(),
                 user.getUserName(),
                 user.getEmail(),
+                user.getPhoneNumber(),
+                user.getPhoneVerified(),
                 user.isAccountNonLocked(),
                 user.isAccountNonExpired(),
                 user.isCredentialsNonExpired(),
@@ -174,24 +182,24 @@ public class UserServiceImpl implements UserService {
 
     }
 
-//    @Override
-//    public void resetPassword(String token, String newPassword) { // update the password in the database
-//        // toke should not be expired
-//        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
-//                .orElseThrow(()-> new RuntimeException("Invalid password reset token"));
-//        if(resetToken.isUsed()){
-//            throw new RuntimeException("Password reset token has already been used");
-//        }
-//        if(resetToken.getExpiryDate().isBefore(Instant.now())){
-//            throw new RuntimeException("Password reset token has expired");
-//        }
-//
-//        User user = resetToken.getUser();
-//        user.setPassword(passwordEncoder.encode(newPassword));
-//        userRepository.save(user);
-//        resetToken.setUsed(true);
-//        passwordResetTokenRepository.save(resetToken);
-//    }
+    @Override
+    public void resetPassword(String token, String newPassword) { // update the password in the database
+        // token should not be expired
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
+                .orElseThrow(()-> new RuntimeException("Invalid password reset token"));
+        if(resetToken.isUsed()){
+            throw new RuntimeException("Password reset token has already been used");
+        }
+        if(resetToken.getExpiryDate().isBefore(Instant.now())){
+            throw new RuntimeException("Password reset token has expired");
+        }
+
+        User user = resetToken.getUser();
+        user.setPassword(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+        resetToken.setUsed(true);
+        passwordResetTokenRepository.save(resetToken);
+    }
 //
 //    @Override
 //    public Optional<User> findByEmail(String email) {

@@ -1,6 +1,7 @@
 package com.secure.homefinitybackend.dtos;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.secure.homefinitybackend.models.FurnishingType;
 import com.secure.homefinitybackend.models.PropertyStatus;
 import com.secure.homefinitybackend.models.PropertyType;
 import lombok.AllArgsConstructor;
@@ -23,6 +24,14 @@ public class PropertyDTO {
     private Integer bedrooms;
     private Integer bathrooms;
     private BigDecimal area;
+    private Double rating;
+    private Integer reviewCount;
+    private FurnishingType furnishing;
+    private List<String> amenities;
+    private Boolean isFeatured;
+    private String tenantUserName;
+    private Double latitude;
+    private Double longitude;
     private String address;
     private String city;
     private String state;
@@ -30,10 +39,10 @@ public class PropertyDTO {
     private List<String> images;
     private String ownerUserName;
     private PropertyStatus status;
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime createdAt;
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime updatedAt;
 }

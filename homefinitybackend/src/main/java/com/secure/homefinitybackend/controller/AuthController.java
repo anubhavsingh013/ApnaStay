@@ -26,6 +26,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.LockedException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -77,12 +78,16 @@ public class AuthController {
                     .authenticate(new UsernamePasswordAuthenticationToken(
                             loginRequest.getUsername(),
                             loginRequest.getPassword()));
-        } catch (AuthenticationException exception) {
-            exception.printStackTrace();
+        } catch (LockedException exception) {
             Map<String, Object> map = new HashMap<>();
-            map.put("message", "Bad credentials");
+            map.put("message", "Your account has been locked. Please contact support to unlock it.");
             map.put("status", false);
-            return new ResponseEntity<Object>(map, HttpStatus.NOT_FOUND);
+            return new ResponseEntity<>(map, HttpStatus.FORBIDDEN);
+        } catch (AuthenticationException exception) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("message", "Invalid username or password");
+            map.put("status", false);
+            return new ResponseEntity<>(map, HttpStatus.UNAUTHORIZED);
         }
 
         // set the authentication
@@ -261,7 +266,7 @@ public class AuthController {
                 userRepository.save(user);
             } else {
                 // Update phone verification status for existing user
-                if (!user.isPhoneVerified()) {
+                if (!user.getPhoneVerified()) {
                     user.setPhoneVerified(true);
                     userRepository.save(user);
                 }
@@ -317,19 +322,26 @@ public class AuthController {
 
     @PostMapping("/public/forgot-password")
     public ResponseEntity<?> forgotPassword(@RequestParam String email){
+        try{
             userService.generatePasswordResetToken(email);
             return ResponseEntity.ok(ApiResponse.success("Password reset email sent!"));
+        }
+        catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(ApiResponse.error("Error sending password reset email: " + e.getMessage()));
+        }
     }
 
-//    @PostMapping("/public/reset-password")
-//    public ResponseEntity<?> resetPassword(@RequestParam String token, @RequestParam String newPassword){
-//        try{
-//            userService.resetPassword(token,newPassword);
-//            return ResponseEntity.ok(new MessageResponse("Password reset successfull!"));
-//        } catch (RuntimeException e) {
-//            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new MessageResponse(e.getMessage()));
-//        }
-//    }
+    @PostMapping("/public/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestParam String token, @RequestParam String newPassword){
+        try{
+            userService.resetPassword(token,newPassword);
+            return ResponseEntity.ok(ApiResponse.success("Password reset successfull!"));
+        } catch (RuntimeException e) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(ApiResponse.error(e.getMessage()));
+        }
+    }
 //
 //    @PostMapping("/enable-2fa")
 //    public ResponseEntity<String> enable2FA(){
