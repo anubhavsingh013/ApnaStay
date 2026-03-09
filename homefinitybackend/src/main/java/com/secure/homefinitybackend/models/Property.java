@@ -48,6 +48,33 @@ public class Property {
     
     @Column(precision = 10, scale = 2)
     private BigDecimal area;
+
+    @Column
+    private Double rating = 0.0;
+
+    @Column(name = "review_count")
+    private Integer reviewCount = 0;
+
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private FurnishingType furnishing;
+
+    @ElementCollection
+    @CollectionTable(name = "property_amenities", joinColumns = @JoinColumn(name = "property_id"))
+    @Column(name = "amenity")
+    private List<String> amenities = new ArrayList<>();
+
+    @Column(name = "is_featured")
+    private Boolean isFeatured = false;
+
+    @Column(name = "tenant_username")
+    private String tenantUserName;
+
+    @Column(name = "latitude")
+    private Double latitude;
+
+    @Column(name = "longitude")
+    private Double longitude;
     
     @Column(nullable = false)
     @NotBlank(message = "Address is required")

@@ -3,7 +3,6 @@ package com.secure.homefinitybackend.controller;
 import com.secure.homefinitybackend.dtos.ApiResponse;
 import com.secure.homefinitybackend.dtos.UserDTO;
 import com.secure.homefinitybackend.models.Role;
-import com.secure.homefinitybackend.models.User;
 import com.secure.homefinitybackend.services.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,8 +21,8 @@ public class AdminController {
     UserService userService;
 
     @GetMapping("/getusers")
-    public ResponseEntity<ApiResponse<List<User>>> getAllUsers() {
-        List<User> users = userService.getAllUsers();
+    public ResponseEntity<ApiResponse<List<UserDTO>>> getAllUsers() {
+        List<UserDTO> users = userService.getAllUserDtos();
         return ResponseEntity.ok(
             ApiResponse.success("Users retrieved successfully", users)
         );
