@@ -1,6 +1,9 @@
-# Frontend env file
-# notesfrontend/.env
-homefinitybackend/.env
-
+# .env file contains prod related data 
+ApnaStayBackend/.env
 # Backend Spring Boot dev config
-homefinitybackend/src/main/resources/application-dev.properties
+ApnaStayBackend/src/main/resources/application-dev.properties
+# plan 
+ApnaStayBackend/plan
+
+
+ApnaStayFrontEnd/.env
