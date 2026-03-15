@@ -2,7 +2,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { properties, mapPropertyDtoToProperty, DEFAULT_PROPERTY_IMAGE, type Property } from "@/constants/properties";
-import { getPropertyById } from "@/lib/api";
+import { getPropertyById, getPublicPropertyById } from "@/lib/api";
 import { useDemoData } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
@@ -78,7 +78,18 @@ const PropertyDetail = () => {
           setProperty(null);
         }
       })
-      .catch(() => setProperty(null))
+      .catch(() => {
+        // Owner-only endpoint returns 401 for non-owners; fetch from public/featured so any user can view
+        return getPublicPropertyById(numId)
+          .then((d) => {
+            if (d && typeof d === "object" && "id" in d) {
+              setProperty(mapPropertyDtoToProperty(d as Parameters<typeof mapPropertyDtoToProperty>[0]));
+            } else {
+              setProperty(null);
+            }
+          })
+          .catch(() => setProperty(null));
+      })
       .finally(() => setLoading(false));
   }, [id, demoMode, user]);
 

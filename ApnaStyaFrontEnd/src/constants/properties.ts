@@ -52,12 +52,12 @@ export interface Property {
   updatedAt?: string;
 }
 
-/** Map backend PropertyDTO to frontend Property for listing/cards/detail. Handles partial API response. */
+/** Map backend PropertyDTO to frontend Property for listing/cards/detail. Handles partial API response (e.g. from public listing). */
 export function mapPropertyDtoToProperty(dto: PropertyDTO | Record<string, unknown>): Property {
   const d = dto as PropertyDTO;
-  const location = [d.address, d.city, d.state].filter(Boolean).join(", ") || "—";
-  const type = ((d.propertyType && PROPERTY_TYPE_MAP[d.propertyType]) || "Flat") as Property["type"];
-  const furnishing = ((d.furnishing && FURNISHING_MAP[d.furnishing]) || "Fully Furnished") as Property["furnishing"];
+  const location = [d.address, d.city, d.state].filter(Boolean).join(", ") || [d.city, d.state].filter(Boolean).join(", ") || "—";
+  const type = ((d.propertyType && PROPERTY_TYPE_MAP[String(d.propertyType)]) || "Flat") as Property["type"];
+  const furnishing = ((d.furnishing && FURNISHING_MAP[String(d.furnishing)]) || "Fully Furnished") as Property["furnishing"];
   return {
     id: d.id,
     title: d.title ?? "—",
