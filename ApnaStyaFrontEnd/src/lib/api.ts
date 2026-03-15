@@ -90,7 +90,7 @@ export interface BackendErrorResponse {
 
 /** Build a user-friendly error message from backend error response */
 export function getApiErrorMessage(data: BackendErrorResponse, fallback = "Something went wrong"): string {
-  const msg = (data.message || "").trim().replace(/^Error:\s*/i, "");
+  const msg = (data.message || (data as { error?: string }).error || "").trim().replace(/^Error:\s*/i, "");
   const list = data.validationErrors?.filter((e) => e?.field && e?.message) ?? [];
   if (list.length === 0) return msg || fallback;
   const fieldLabels: Record<string, string> = {
@@ -116,7 +116,9 @@ async function apiRequest<T>(
   } = {}
 ): Promise<T> {
   const { method = "GET", body, auth = true, csrf = true } = options;
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+  };
 
   if (body) headers["Content-Type"] = "application/json";
   if (auth) {
@@ -146,7 +148,7 @@ async function apiRequest<T>(
     }
     const userMessage = getApiErrorMessage(
       data as BackendErrorResponse,
-      `Request failed (${res.status})`
+      res.status === 401 ? "Invalid username or password." : `Request failed (${res.status})`
     );
     throw new Error(userMessage);
   }
