@@ -61,15 +61,15 @@ export function getDecodedToken(): JwtPayload | null {
   }
 }
 
-async function fetchCsrfToken(): Promise<string> {
-  const res = await fetch(`${BASE_URL}/api/csrf-token`);
-  const data = await res.json();
-  csrfToken = data.token;
+async function fetchCsrfToken(): Promise<string | null> {
+  const res = await fetch(`${BASE_URL}/api/csrf-token`, { credentials: "include" });
+  const data = await res.json().catch(() => ({})) as { token?: string; headerName?: string };
+  csrfToken = data.token ?? null;
   if (data.headerName) csrfHeaderName = data.headerName;
-  return csrfToken!;
+  return csrfToken;
 }
 
-async function getCsrf(): Promise<string> {
+async function getCsrf(): Promise<string | null> {
   if (csrfToken) return csrfToken;
   return fetchCsrfToken();
 }
@@ -127,7 +127,7 @@ async function apiRequest<T>(
   }
   if (csrf) {
     const token = await getCsrf();
-    headers[csrfHeaderName] = token;
+    if (token) headers[csrfHeaderName] = token;
   }
 
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -137,10 +137,15 @@ async function apiRequest<T>(
     credentials: "include", // Send cookies (e.g. JSESSIONID, XSRF-TOKEN) when backend uses session/cookies
   });
 
-  const data = await res.json().catch(() => ({})) as BackendErrorResponse & T;
+  const text = await res.text();
+  const data = (text && text.trim().length > 0
+    ? (() => { try { return JSON.parse(text) as BackendErrorResponse & T; } catch { return {} as BackendErrorResponse & T; } })()
+    : {}) as BackendErrorResponse & T;
 
   if (!res.ok) {
-    if (res.status === 401 && auth) {
+    // Only clear session on 401 when we had a token and it's a state-changing request.
+    // GET 401 (e.g. "not authorized to view this resource") should not log the user out.
+    if (res.status === 401 && auth && getJwt() && method !== "GET") {
       logout();
       if (typeof window !== "undefined") {
         window.dispatchEvent(new CustomEvent("apnastay:auth:401"));
@@ -327,9 +332,9 @@ export async function enable2fa(): Promise<string> {
   if (!jwt) throw new Error("Not authenticated");
   const token = await getCsrf();
   const headers: Record<string, string> = {
-    [csrfHeaderName]: token,
     Authorization: `Bearer ${jwt}`,
   };
+  if (token) headers[csrfHeaderName] = token;
   const res = await fetch(`${BASE_URL}/api/auth/enable-2fa`, {
     method: "POST",
     headers,
@@ -370,7 +375,7 @@ export async function verify2fa(code: string): Promise<void> {
   const path = `/api/auth/verify-2fa?code=${encodeURIComponent(code)}`;
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: { [csrfHeaderName]: token, Authorization: `Bearer ${jwt}` },
+    headers: { ...(token ? { [csrfHeaderName]: token } : {}), Authorization: `Bearer ${jwt}` },
     credentials: "include",
   });
   if (!res.ok) {
@@ -386,7 +391,7 @@ export async function disable2fa(): Promise<void> {
   const token = await getCsrf();
   const res = await fetch(`${BASE_URL}/api/auth/disable-2fa`, {
     method: "POST",
-    headers: { [csrfHeaderName]: token, Authorization: `Bearer ${jwt}` },
+    headers: { ...(token ? { [csrfHeaderName]: token } : {}), Authorization: `Bearer ${jwt}` },
     credentials: "include",
   });
   if (!res.ok) {
@@ -401,7 +406,7 @@ export async function verify2faLogin(code: string, jwtToken: string): Promise<Lo
   const path = `/api/auth/public/verify-2fa-login?code=${encodeURIComponent(code)}&jwtToken=${encodeURIComponent(jwtToken)}`;
   const res = await fetch(`${BASE_URL}${path}`, {
     method: "POST",
-    headers: csrfHeaderName ? { [csrfHeaderName]: csrf } : {},
+    headers: csrfHeaderName && csrf ? { [csrfHeaderName]: csrf } : {},
     credentials: "include",
   });
   const text = await res.text();
@@ -438,9 +443,10 @@ export async function verify2faLogin(code: string, jwtToken: string): Promise<Lo
   }
 
   setJwt(jwtToken);
+  const csrfVal = await getCsrf();
   const userRes = await fetch(`${BASE_URL}/api/auth/user`, {
     method: "GET",
-    headers: { Authorization: `Bearer ${jwtToken}`, ...(csrfHeaderName ? { [csrfHeaderName]: await getCsrf() } : {}) },
+    headers: { Authorization: `Bearer ${jwtToken}`, ...(csrfHeaderName && csrfVal ? { [csrfHeaderName]: csrfVal } : {}) },
     credentials: "include",
   });
   const userJson = await userRes.json().catch(() => ({})) as { success?: boolean; data?: UserInfoResponse & { userName?: string } };
@@ -553,6 +559,27 @@ export async function getPropertiesByUser(userName: string) {
 
 export async function getPropertyById(id: number) {
   return apiRequest<{ success: boolean; data: PropertyDTO }>(`/api/property/${id}`);
+}
+
+/** Fetch a single property from public/featured lists (no auth or ownership required). Use for detail view when getPropertyById returns 401. */
+export async function getPublicPropertyById(id: number): Promise<PropertyDTO | null> {
+  try {
+    const featured = await apiRequest<{ success?: boolean; data?: PropertyDTO[] }>("/api/property/public/featured", { auth: false });
+    const list = featured?.data;
+    if (Array.isArray(list)) {
+      const found = list.find((p: { id?: number }) => p.id === id);
+      if (found) return found as PropertyDTO;
+    }
+    const publicList = await apiRequest<{ success?: boolean; data?: PropertyDTO[] }>("/api/property/public", { auth: false });
+    const pub = publicList?.data;
+    if (Array.isArray(pub)) {
+      const found = pub.find((p: { id?: number }) => p.id === id);
+      if (found) return found as PropertyDTO;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 export async function createProperty(data: PropertyRequest) {

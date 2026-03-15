@@ -99,9 +99,14 @@ public class PropertyServiceImpl implements PropertyService {
         
         Property property = propertyRepository.findById(propertyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Property", "id", propertyId));
-        
-        if (!property.getOwnerUserName().equals(userName)) {
-            log.warn("User {} attempted to update property {} owned by {}", 
+
+        boolean isAdmin = userRepository.findByUserName(userName)
+                .map(u -> u.getRole() != null && u.getRole().getRoleName() == AppRole.ROLE_ADMIN)
+                .orElse(false);
+        boolean isPropertyOwner = property.getOwnerUserName().equals(userName);
+
+        if (!isPropertyOwner && !isAdmin) {
+            log.warn("User {} attempted to update property {} owned by {}",
                     userName, propertyId, property.getOwnerUserName());
             throw new UnauthorizedException("You are not authorized to update this property");
         }

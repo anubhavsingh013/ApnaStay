@@ -6,6 +6,7 @@ import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
 import com.secure.apnastaybackend.entity.AppRole;
 import com.secure.apnastaybackend.entity.PropertyStatus;
+import com.secure.apnastaybackend.entity.User;
 import com.secure.apnastaybackend.repositories.UserRepository;
 import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.PropertyService;
@@ -21,6 +22,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/property")
