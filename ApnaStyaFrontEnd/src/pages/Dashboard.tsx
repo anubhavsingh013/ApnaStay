@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
@@ -90,6 +90,7 @@ const Dashboard = () => {
   }>({ open: false, title: "", description: "", confirmLabel: "Confirm", variant: "default", onConfirm: () => {} });
   const [verifySuccessDialog, setVerifySuccessDialog] = useState<{ open: boolean; message: string }>({ open: false, message: "" });
   const [verifySubmitDialogOpen, setVerifySubmitDialogOpen] = useState(false);
+  const [updateProfileFirstDialogOpen, setUpdateProfileFirstDialogOpen] = useState(false);
   const profileUpdateInitialRef = useRef<string | null>(null);
 
   const openConfirm = (title: string, description: string, confirmLabel: string, variant: "default" | "destructive", onConfirm: () => void) => {
@@ -596,6 +597,35 @@ const Dashboard = () => {
   };
   const canSaveProfileUpdate = profileUpdateDialogOpen && isProfileUpdateFormValid() && hasProfileUpdateFormChanged();
 
+  const handleVerifyClick = () => {
+    if (demoMode) {
+      setDemoLoginPromptOpen(true);
+      return;
+    }
+    if (!useRealApi) return;
+    if (!apiProfile) {
+      setUpdateProfileFirstDialogOpen(true);
+      return;
+    }
+    const { countryCode, mobile } = parseMobileValue(apiProfile.mobile || "");
+    const sc = indianStates.find((s) => s.name === apiProfile.state)?.code ?? "";
+    setProfileSubmitForm({
+      fullName: apiProfile.fullName || "",
+      gender: apiProfile.gender || "Male",
+      dateOfBirth: apiProfile.dateOfBirth || "",
+      aadharNumber: apiProfile.aadharNumber || "",
+      mobile: mobile ? `${countryCode || "91"}|${mobile}` : "",
+      idType: apiProfile.idType || "Aadhar",
+      idNumber: apiProfile.idNumber || "",
+      address: apiProfile.address || "",
+      city: apiProfile.city || "",
+      state: apiProfile.state || "",
+      pinCode: apiProfile.pinCode || "",
+      stateCode: sc,
+    });
+    setVerifySubmitDialogOpen(true);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-sky-50/30 dark:from-slate-950 dark:via-slate-900/95 dark:to-slate-900">
       <Navbar />
@@ -683,7 +713,7 @@ const Dashboard = () => {
                   <p className="font-semibold text-foreground text-sm truncate">{displayName}</p>
                   <div className="flex items-center gap-2 flex-wrap mt-0.5">
                     <span className="inline-block px-2 py-0.5 rounded-md bg-sky-500/15 dark:bg-sky-400/20 text-sky-700 dark:text-sky-300 text-xs font-semibold tracking-wide">Tenant</span>
-                    <VerificationBadge status={verificationStatus} showIcon={true} className="text-[10px]" approvedAsActiveStyle needsResubmit={profileUpdatedNeedsResubmit} onVerifyClick={demoMode ? () => setDemoLoginPromptOpen(true) : (useRealApi ? () => setVerifySubmitDialogOpen(true) : undefined)} />
+                    <VerificationBadge status={verificationStatus} showIcon={true} className="text-[10px]" approvedAsActiveStyle needsResubmit={profileUpdatedNeedsResubmit} onVerifyClick={handleVerifyClick} />
                   </div>
                 </div>
               </div>
@@ -943,7 +973,7 @@ const Dashboard = () => {
                   <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="text-xl font-bold text-foreground tracking-tight">My Profile</h2>
-                      <VerificationBadge status={verificationStatus} showIcon className="text-xs" approvedAsActiveStyle needsResubmit={profileUpdatedNeedsResubmit} onVerifyClick={demoMode ? () => setDemoLoginPromptOpen(true) : (useRealApi ? () => setVerifySubmitDialogOpen(true) : undefined)} />
+                      <VerificationBadge status={verificationStatus} showIcon className="text-xs" approvedAsActiveStyle needsResubmit={profileUpdatedNeedsResubmit} onVerifyClick={handleVerifyClick} />
                       <TwoFactorBadge enabled={profile2faEnabled ?? false} className="text-xs" onEnableClick={(profile2faEnabled === false) ? (demoMode ? () => setDemoLoginPromptOpen(true) : () => setTwoFactorDialogOpen(true)) : undefined} />
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -1055,7 +1085,7 @@ const Dashboard = () => {
                               </div>
                             )}
                           </div>
-                        ) : demoProfile ? (
+                        ) : (demoMode && demoProfile) ? (
                           <div className="space-y-6">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                               <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-800/30 p-4 sm:col-span-2">
@@ -1372,8 +1402,10 @@ const Dashboard = () => {
             </div>
           </div>
           <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setProfileUpdateDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleUpdateProfileClick} disabled={!canSaveProfileUpdate || updatingProfile} className="border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40">
+            <Button variant="outline" onClick={() => setProfileUpdateDialogOpen(false)} className="border-2 border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 hover:border-slate-500 dark:hover:border-slate-400">
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateProfileClick} disabled={!canSaveProfileUpdate || updatingProfile} className="border-2 border-emerald-600 dark:border-emerald-500 bg-emerald-600 dark:bg-emerald-700 text-white hover:bg-emerald-700 dark:hover:bg-emerald-600 hover:border-emerald-700 dark:hover:border-emerald-600">
               {updatingProfile ? "Saving..." : <><CheckCircle className="h-4 w-4 mr-2" /> Save</>}
             </Button>
           </DialogFooter>
@@ -1456,36 +1488,32 @@ const Dashboard = () => {
       </Dialog>
 
       {useRealApi && (
-        <SubmitProfileForReviewDialog
-          open={verifySubmitDialogOpen}
-          onOpenChange={setVerifySubmitDialogOpen}
-          submitting={submittingProfile}
-          onConfirm={async () => {
-            if (profileUpdatedNeedsResubmit) {
+        <>
+          <Dialog open={updateProfileFirstDialogOpen} onOpenChange={setUpdateProfileFirstDialogOpen}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5 text-amber-500" />
+                  Profile required
+                </DialogTitle>
+                <DialogDescription>
+                  Update your profile, then submit for review.
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button onClick={() => setUpdateProfileFirstDialogOpen(false)}>OK</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+          <SubmitProfileForReviewDialog
+            open={verifySubmitDialogOpen}
+            onOpenChange={setVerifySubmitDialogOpen}
+            submitting={submittingProfile}
+            onConfirm={async () => {
               await handleSubmitProfileForReview();
-            } else {
-              if (apiProfile) {
-                const { countryCode, mobile } = parseMobileValue(apiProfile.mobile || "");
-                const sc = indianStates.find((s) => s.name === apiProfile.state)?.code ?? "";
-                setProfileSubmitForm({
-                  fullName: apiProfile.fullName || "",
-                  gender: apiProfile.gender || "Male",
-                  dateOfBirth: apiProfile.dateOfBirth || "",
-                  aadharNumber: apiProfile.aadharNumber || "",
-                  mobile: mobile ? `${countryCode || "91"}|${mobile}` : "",
-                  idType: apiProfile.idType || "Aadhar",
-                  idNumber: apiProfile.idNumber || "",
-                  address: apiProfile.address || "",
-                  city: apiProfile.city || "",
-                  state: apiProfile.state || "",
-                  pinCode: apiProfile.pinCode || "",
-                  stateCode: sc,
-                });
-              }
-              setProfileSubmitDialogOpen(true);
-            }
-          }}
-        />
+            }}
+          />
+        </>
       )}
 
       {demoMode && <DemoModeLoginPrompt open={demoLoginPromptOpen} onOpenChange={setDemoLoginPromptOpen} message="Please sign in to access the complete feature. Demo mode shows a preview only." />}

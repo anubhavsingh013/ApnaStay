@@ -39,9 +39,9 @@ export function SubmitProfileForReviewDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Submit profile for review</DialogTitle>
+          <DialogTitle>Submit profile for verification</DialogTitle>
           <DialogDescription>
-            Your profile will be submitted for review. An admin will verify your details before you can access full features.
+            Do you want to submit your profile for verification? An admin will review your details before you can access full features.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-2">

@@ -1841,7 +1841,7 @@ const AdminDashboard = () => {
                       {field("Username", p.userName ?? null)}
                       {field("Gender", p.gender ?? null)}
                       {field("Date of birth", p.dateOfBirth ? formatDob(p.dateOfBirth) : null, <Calendar className="h-3.5 w-3.5" />)}
-                      {field("Aadhar number", p.aadharNumber ? `XXXX-XXXX-${String(p.aadharNumber).slice(-4)}` : null, <ShieldCheck className="h-3.5 w-3.5" />)}
+                      {field("Aadhar number", p.aadharNumber ?? p.idNumber ?? null, <ShieldCheck className="h-3.5 w-3.5" />)}
                       {field("Mobile", p.mobile ?? null, <Phone className="h-3.5 w-3.5" />)}
                       {field("Email", p.email ?? null, <Mail className="h-3.5 w-3.5" />)}
                       {field("Firm name", p.firmName ?? null)}
@@ -1878,7 +1878,7 @@ const AdminDashboard = () => {
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Username</p><p className="text-sm text-foreground">{p.ownerUser}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gender</p><p className="text-sm text-foreground">{p.gender}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Date of birth</p><p className="text-sm text-foreground">{formatDob(p.dob)}</p></div>
-                      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Aadhar</p><p className="text-sm text-foreground">XXXX-{p.aadhar.slice(-4)}</p></div>
+                      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Aadhar</p><p className="text-sm text-foreground">{p.aadhar}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Mobile</p><p className="text-sm text-foreground">{p.mobile}</p></div>
                       <div className="space-y-1 sm:col-span-2"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email</p><p className="text-sm text-foreground break-all">{p.email}</p></div>
                       <div className="space-y-1 sm:col-span-2"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Address</p><p className="text-sm text-foreground">{addr || "—"}</p></div>
@@ -1943,7 +1943,7 @@ const AdminDashboard = () => {
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Username</p><p className="text-sm text-foreground">{p.tenantUser}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gender</p><p className="text-sm text-foreground">{p.gender}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Date of birth</p><p className="text-sm text-foreground">{formatDob(p.dob)}</p></div>
-                      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">ID type / number</p><p className="text-sm text-foreground">{p.idType} — XXXX-{p.idNumber.slice(-4)}</p></div>
+                      <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">ID type / number</p><p className="text-sm text-foreground">{p.idType} — {p.idNumber}</p></div>
                       <div className="space-y-1"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Mobile</p><p className="text-sm text-foreground">{p.mobile}</p></div>
                       <div className="space-y-1 sm:col-span-2"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Email</p><p className="text-sm text-foreground break-all">{p.email}</p></div>
                       <div className="space-y-1 sm:col-span-2"><p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Address</p><p className="text-sm text-foreground">{[p.address, p.city, p.state, p.pincode].filter(Boolean).join(", ") || "—"}</p></div>

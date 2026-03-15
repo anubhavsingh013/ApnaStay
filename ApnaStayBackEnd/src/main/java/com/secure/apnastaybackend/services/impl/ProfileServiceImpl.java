@@ -45,6 +45,31 @@ public class ProfileServiceImpl implements ProfileService {
 
     @Override
     @Transactional
+    public ProfileDTO updateProfileDetails(String userName, AppRole profileRole, ProfileRequest request) {
+        validateMandatoryProfileFields(request, "update");
+        if (profileRole == null) {
+            throw new BadRequestException("Invalid profile role");
+        }
+        User user = userRepository.findByUserName(userName)
+            .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+            Profile profile = profileRepository.findByUserUserIdAndProfileRole(user.getUserId(), profileRole)
+            .orElseGet(() -> {
+                Profile p = new Profile();
+                p.setUser(user);
+                p.setProfileRole(profileRole);
+//                p.setStatus(ProfileStatus.PENDING);
+                return p;
+            });
+        profile.setStatus(ProfileStatus.PENDING);
+        applyRequestToProfile(request, profile);
+
+        Profile saved = profileRepository.save(profile);
+        log.info("Profile details updated: user={} role={}", userName, profileRole);
+        return toDTO(saved);
+    }
+
+    @Override
+    @Transactional
     public ProfileDTO submitForReview(String userName, ProfileRequest request) {
         validateMandatoryProfileFields(request, "submit for review");
         AppRole profileRole = request.getRole();
@@ -53,13 +78,10 @@ public class ProfileServiceImpl implements ProfileService {
         }
         User user = userRepository.findByUserName(userName)
                 .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+
         Profile profile = profileRepository.findByUserUserIdAndProfileRole(user.getUserId(), profileRole)
-                .orElseGet(() -> {
-                    Profile p = new Profile();
-                    p.setUser(user);
-                    p.setProfileRole(profileRole);
-                    return p;
-                });
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Profile", "userId/role", "Update your profile first: " + userName + "/" + profileRole));
         if ( profile.getStatus()==ProfileStatus.IN_PROGRESS) {
             throw new BadRequestException("Profile already submitted for review. Wait for approval.");
         }
@@ -72,25 +94,6 @@ public class ProfileServiceImpl implements ProfileService {
         profile.setSubmittedAt(LocalDateTime.now());
         Profile saved = profileRepository.save(profile);
         log.info("Profile submitted for review: user={} role={}", userName, profileRole);
-        return toDTO(saved);
-    }
-
-    @Override
-    @Transactional
-    public ProfileDTO updateProfileDetails(String userName, AppRole profileRole, ProfileRequest request) {
-        validateMandatoryProfileFields(request, "update");
-        if (profileRole == null) {
-            throw new BadRequestException("Invalid profile role");
-        }
-        User user = userRepository.findByUserName(userName)
-                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
-        Profile profile = profileRepository.findByUserUserIdAndProfileRole(user.getUserId(), profileRole)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Profile", "userId/role", "Submit for review first: " + userName + "/" + profileRole));
-        applyRequestToProfile(request, profile);
-        profile.setStatus(ProfileStatus.PENDING);
-        Profile saved = profileRepository.save(profile);
-        log.info("Profile details updated: user={} role={}", userName, profileRole);
         return toDTO(saved);
     }
 
