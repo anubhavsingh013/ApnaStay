@@ -11,6 +11,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
 import java.security.Key;
 import java.util.Date;
 import java.util.stream.Collectors;
@@ -61,7 +62,19 @@ public class JwtUtils {
     }
 
     private Key key() {
-        return Keys.hmacShaKeyFor(Decoders.BASE64.decode(jwtSecret));
+        byte[] keyBytes;
+        try {
+            keyBytes = Decoders.BASE64.decode(jwtSecret);
+        } catch (IllegalArgumentException e) {
+            // Production often uses plain env var; use UTF-8 bytes (min 32 bytes for HS256)
+            keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
+            if (keyBytes.length < 32) {
+                throw new IllegalStateException("JWT secret must be at least 32 characters when not Base64-encoded. " +
+                        "Set SPRING_APP_JWT_SECRET to a long secret or a Base64-encoded key.");
+            }
+            logger.debug("Using JWT secret as plain UTF-8 (not Base64)");
+        }
+        return Keys.hmacShaKeyFor(keyBytes);
     }
 
     public boolean validateJwtToken(String authToken) {
@@ -76,6 +89,8 @@ public class JwtUtils {
             logger.error("JWT token is unsupported: {}", e.getMessage());
         } catch (IllegalArgumentException e) {
             logger.error("JWT claims string is empty: {}", e.getMessage());
+        } catch (io.jsonwebtoken.security.SignatureException e) {
+            logger.error("JWT signature invalid (wrong secret or tampered token): {}", e.getMessage());
         }
         return false;
     }

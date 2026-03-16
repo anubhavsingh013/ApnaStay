@@ -21,6 +21,7 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
@@ -51,6 +52,7 @@ public class SecurityConfig {
     SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) {
 
         http.authorizeHttpRequests((requests) -> requests
+                .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/csrf-token").permitAll()
                 .requestMatchers("/api/auth/public/**").permitAll()
@@ -69,7 +71,7 @@ public class SecurityConfig {
         http.httpBasic(withDefaults());
         // http.csrf(csrf->csrf.disable());
         http.csrf(csrf-> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/public/**", "/oauth2/**"));
+                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/public/**", "/api/admin/**", "/oauth2/**"));
         return http.build();
     }
 
@@ -77,9 +79,10 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration corsConfig = new CorsConfiguration();
         corsConfig.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000","http://localhost:5173",
+                "http://localhost:3000", "http://localhost:5173",
                 "https://apnastaybackend.netlify.app",
-                frontendUrl  // Keep this for other environments
+                "https://apnastayhere.netlify.app",
+                frontendUrl
         ));
         corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         corsConfig.setAllowedHeaders(Arrays.asList("authorization", "content-type", "x-xsrf-token", "x-requested-with"));

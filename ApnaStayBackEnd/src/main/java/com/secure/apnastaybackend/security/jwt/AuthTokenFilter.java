@@ -35,7 +35,6 @@ public class AuthTokenFilter extends OncePerRequestFilter { // executed once per
             String jwt = parseJwt(request);
             if (jwt != null && jwtUtils.validateJwtToken(jwt)) {
                 String username = jwtUtils.getUserNameFromJwtToken(jwt);
-
                 UserDetails userDetails = userDetailsService.loadUserByUsername(username);
 
                 UsernamePasswordAuthenticationToken authentication =
@@ -47,9 +46,11 @@ public class AuthTokenFilter extends OncePerRequestFilter { // executed once per
                 authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
+            } else if (jwt != null) {
+                logger.warn("Admin request with invalid or expired JWT to {} (check JWT secret and token expiry)", request.getRequestURI());
             }
         } catch (Exception e) {
-            logger.error("Cannot set user authentication: {}", e);
+            logger.error("Cannot set user authentication for {}: {}", request.getRequestURI(), e.getMessage());
         }
 
         filterChain.doFilter(request, response);
