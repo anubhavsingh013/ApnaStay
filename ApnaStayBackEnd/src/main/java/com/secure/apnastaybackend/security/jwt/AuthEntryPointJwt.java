@@ -23,8 +23,8 @@ public class AuthEntryPointJwt implements AuthenticationEntryPoint { // for hand
     @Override
     public void commence(HttpServletRequest request, HttpServletResponse response, AuthenticationException authException)
             throws IOException, ServletException {
-        logger.error("Unauthorized error: {}", authException.getMessage());
-        System.out.println(authException);
+        // 401 is expected when a protected endpoint is called without a valid JWT (e.g. user not logged in)
+        logger.warn("Unauthorized access to {}: {}", request.getRequestURI(), authException.getMessage());
 
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
