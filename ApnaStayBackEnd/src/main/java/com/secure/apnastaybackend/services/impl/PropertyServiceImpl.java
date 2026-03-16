@@ -45,7 +45,7 @@ public class PropertyServiceImpl implements PropertyService {
             throw new BadRequestException("Username cannot be empty");
         }
 
-        if (!profileService.isProfileApproved(userName, AppRole.ROLE_OWNER)) {
+        if (!profileService.isProfileApproved(userName, AppRole.ROLE_OWNER) && !isAdmin(userName)) {
             throw new ProfileNotApprovedException("Your owner profile must be approved before you can add properties. Please submit your profile and wait for admin approval.");
         }
         
@@ -100,9 +100,7 @@ public class PropertyServiceImpl implements PropertyService {
         Property property = propertyRepository.findById(propertyId)
                 .orElseThrow(() -> new ResourceNotFoundException("Property", "id", propertyId));
 
-        boolean isAdmin = userRepository.findByUserName(userName)
-                .map(u -> u.getRole() != null && u.getRole().getRoleName() == AppRole.ROLE_ADMIN)
-                .orElse(false);
+        boolean isAdmin = isAdmin(userName);
         boolean isPropertyOwner = property.getOwnerUserName().equals(userName);
 
         if (!isPropertyOwner && !isAdmin) {
@@ -136,6 +134,12 @@ public class PropertyServiceImpl implements PropertyService {
         
         log.info("Property ID: {} updated successfully for user: {}", propertyId, userName);
         return convertToDTO(updatedProperty);
+    }
+
+    boolean isAdmin(String userName){
+        return userRepository.findByUserName(userName)
+                .map(u -> u.getRole() != null && u.getRole().getRoleName() == AppRole.ROLE_ADMIN)
+                .orElse(false);
     }
 
     @Override
