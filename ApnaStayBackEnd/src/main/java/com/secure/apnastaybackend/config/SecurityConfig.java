@@ -62,8 +62,9 @@ public class SecurityConfig {
 
         // making authentrypoint as default exception handler class for authentication
         http.exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler));
-        // add custom filter to validate the jwt before actual username and password authentication
+        // add JWT filter first so it has a registered position, then add CORS preflight before it
         http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
+        http.addFilterBefore(new CorsPreflightFilter(corsConfigurationSource()), AuthTokenFilter.class);
 
         // allow cors
         http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
@@ -71,7 +72,7 @@ public class SecurityConfig {
         http.httpBasic(withDefaults());
         // http.csrf(csrf->csrf.disable());
         http.csrf(csrf-> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/**", "/api/admin/**", "/oauth2/**"));
+                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/**", "/api/profile/**", "/api/admin/**", "/api/complaints/**", "/api/audit/**", "/oauth2/**"));
         return http.build();
     }
 
