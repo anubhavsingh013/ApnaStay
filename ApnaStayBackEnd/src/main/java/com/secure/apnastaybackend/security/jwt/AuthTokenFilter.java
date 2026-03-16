@@ -28,6 +28,11 @@ public class AuthTokenFilter extends OncePerRequestFilter { // executed once per
     private static final Logger logger = LoggerFactory.getLogger(AuthTokenFilter.class);
 
     @Override
+    protected boolean shouldNotFilter(HttpServletRequest request) {
+        return "OPTIONS".equalsIgnoreCase(request.getMethod());
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
             throws ServletException, IOException {
         logger.debug("AuthTokenFilter called for URI: {}", request.getRequestURI());
@@ -47,7 +52,7 @@ public class AuthTokenFilter extends OncePerRequestFilter { // executed once per
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } else if (jwt != null) {
-                logger.warn("Admin request with invalid or expired JWT to {} (check JWT secret and token expiry)", request.getRequestURI());
+                logger.warn("Request with invalid or expired JWT to {} (check JWT secret and token expiry)", request.getRequestURI());
             }
         } catch (Exception e) {
             logger.error("Cannot set user authentication for {}: {}", request.getRequestURI(), e.getMessage());

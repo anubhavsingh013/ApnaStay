@@ -71,7 +71,7 @@ public class SecurityConfig {
         http.httpBasic(withDefaults());
         // http.csrf(csrf->csrf.disable());
         http.csrf(csrf-> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/public/**", "/api/admin/**", "/oauth2/**"));
+                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/**", "/api/admin/**", "/oauth2/**"));
         return http.build();
     }
 
