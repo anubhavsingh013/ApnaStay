@@ -7,8 +7,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 @Entity
-@Table(name = "property_images")
-@IdClass(PropertyImageId.class)
+@Table(name = "property_images",
+        uniqueConstraints = @UniqueConstraint(columnNames = {"property_id", "image_url"}))
 @Getter
 @Setter
 @NoArgsConstructor
@@ -16,11 +16,13 @@ import lombok.Setter;
 public class PropertyImage {
 
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
     @Column(name = "property_id", insertable = false, updatable = false)
     private Long propertyId;
 
-    @Id
-    @Column(name = "image_url", length = 1000)
+    @Column(name = "image_url", length = 1000, nullable = false)
     private String imageUrl;
 
     @ManyToOne(fetch = FetchType.LAZY)
