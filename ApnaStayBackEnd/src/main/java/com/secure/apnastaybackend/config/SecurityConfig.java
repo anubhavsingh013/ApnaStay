@@ -7,32 +7,32 @@ import com.secure.apnastaybackend.repositories.RoleRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
 import com.secure.apnastaybackend.security.jwt.AuthEntryPointJwt;
 import com.secure.apnastaybackend.security.jwt.AuthTokenFilter;
+import com.secure.apnastaybackend.security.jwt.JwtUtils;
+import com.secure.apnastaybackend.security.services.UserDetailsServiceImpl;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.Ordered;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
-import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
+import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.time.LocalDate;
 import java.util.Arrays;
-
-import static org.springframework.security.config.Customizer.withDefaults;
 
 @Configuration
 @EnableWebSecurity
@@ -45,11 +45,28 @@ public class SecurityConfig {
     String frontendUrl;
 
     @Bean
-    public AuthTokenFilter authenticationJwtTokenFilter() {
-        return new AuthTokenFilter();
+    public AuthTokenFilter authenticationJwtTokenFilter(JwtUtils jwtUtils, UserDetailsServiceImpl userDetailsService) {
+        return new AuthTokenFilter(jwtUtils, userDetailsService);
     }
+
+    /**
+     * Runs before Spring Security — OPTIONS never enters the security chain (no 401 on preflight).
+     */
     @Bean
-    SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http) {
+    public FilterRegistrationBean<CorsPreflightFilter> corsPreflightFilterRegistration(CorsConfigurationSource corsConfigurationSource) {
+        FilterRegistrationBean<CorsPreflightFilter> reg = new FilterRegistrationBean<>();
+        reg.setFilter(new CorsPreflightFilter(corsConfigurationSource));
+        reg.setOrder(Ordered.HIGHEST_PRECEDENCE);
+        reg.addUrlPatterns("/*");
+        reg.setName("corsPreflightFilter");
+        return reg;
+    }
+
+    @Bean
+    SecurityFilterChain defaultSecurityFilterChain(HttpSecurity http, AuthTokenFilter authTokenFilter) {
+
+        http.sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
+        http.csrf(csrf -> csrf.disable());
 
         http.authorizeHttpRequests((requests) -> requests
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
@@ -60,37 +77,35 @@ public class SecurityConfig {
                 .requestMatchers("/api/property/public/**").permitAll()
                 .anyRequest().authenticated());
 
-        // making authentrypoint as default exception handler class for authentication
         http.exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler));
-        // add JWT filter first so it has a registered position, then add CORS preflight before it
-        http.addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
-        http.addFilterBefore(new CorsPreflightFilter(corsConfigurationSource()), AuthTokenFilter.class);
-
-        // allow cors
+        http.addFilterBefore(authTokenFilter, UsernamePasswordAuthenticationFilter.class);
         http.cors(cors -> cors.configurationSource(corsConfigurationSource()));
 
-        http.httpBasic(withDefaults());
-        // http.csrf(csrf->csrf.disable());
-        http.csrf(csrf-> csrf.csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                .ignoringRequestMatchers("/api/auth/public/**", "/api/property/**", "/api/profile/**", "/api/admin/**", "/api/complaints/**", "/api/audit/**", "/oauth2/**"));
         return http.build();
     }
 
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration corsConfig = new CorsConfiguration();
-        corsConfig.setAllowedOrigins(Arrays.asList(
-                "http://localhost:3000", "http://localhost:5173",
-                "https://apnastaybackend.netlify.app",
-                "https://apnastayhere.netlify.app",
-                frontendUrl
+        corsConfig.setAllowedOriginPatterns(Arrays.asList(
+                "http://localhost:*",
+                "http://127.0.0.1:*",
+                "https://*.netlify.app",
+                "https://*.onrender.com"
         ));
-        corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        corsConfig.setAllowedHeaders(Arrays.asList("authorization", "content-type", "x-xsrf-token", "x-requested-with"));
+        if (frontendUrl != null && !frontendUrl.isBlank()) {
+            String u = frontendUrl.trim();
+            if (!u.contains("*")) {
+                corsConfig.addAllowedOrigin(u);
+            }
+        }
+        corsConfig.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+        corsConfig.setAllowedHeaders(Arrays.asList(
+                "authorization", "content-type", "x-xsrf-token", "x-requested-with", "accept", "origin"));
         corsConfig.setAllowCredentials(true);
         corsConfig.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", corsConfig); // Apply to all endpoints
+        source.registerCorsConfiguration("/**", corsConfig);
         return source;
     }
 
