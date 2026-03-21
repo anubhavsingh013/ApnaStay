@@ -2,6 +2,9 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 let csrfToken: string | null = null;
 let csrfHeaderName = "X-XSRF-TOKEN";
+/** After first CSRF fetch finishes (even if token is null — e.g. backend has CSRF disabled). */
+let csrfFetchCompleted = false;
+let csrfFetchInFlight: Promise<string | null> | null = null;
 
 function getJwt(): string | null {
   return localStorage.getItem("jwt");
@@ -28,9 +31,16 @@ export function clearStoredUser() {
   localStorage.removeItem("user");
 }
 
+function resetCsrfClientCache() {
+  csrfToken = null;
+  csrfFetchCompleted = false;
+  csrfFetchInFlight = null;
+}
+
 export function logout() {
   clearJwt();
   clearStoredUser();
+  resetCsrfClientCache();
 }
 
 /** Decoded JWT payload (from backend: sub, roles, email, userId, is2faEnabled, iat, exp). Use for Account display. */
@@ -61,17 +71,42 @@ export function getDecodedToken(): JwtPayload | null {
   }
 }
 
-async function fetchCsrfToken(): Promise<string | null> {
-  const res = await fetch(`${BASE_URL}/api/csrf-token`, { credentials: "include" });
-  const data = await res.json().catch(() => ({})) as { token?: string; headerName?: string };
-  csrfToken = data.token ?? null;
-  if (data.headerName) csrfHeaderName = data.headerName;
-  return csrfToken;
+/**
+ * Fetches CSRF once per page session (or until logout). When the backend disables CSRF,
+ * `/api/csrf-token` returns null/empty — we still cache that so every PUT/GET does not
+ * re-hit the endpoint.
+ * Concurrent callers share one in-flight request.
+ */
+async function fetchCsrfTokenOnce(): Promise<string | null> {
+  if (csrfFetchCompleted) return csrfToken;
+  if (!csrfFetchInFlight) {
+    csrfFetchInFlight = (async () => {
+      try {
+        const res = await fetch(`${BASE_URL}/api/csrf-token`, { credentials: "include" });
+        const data = (await res.json().catch(() => (null))) as { token?: string; headerName?: string } | null;
+        if (data && typeof data === "object") {
+          const raw = data.token;
+          csrfToken = typeof raw === "string" && raw.length > 0 ? raw : null;
+          if (data.headerName) csrfHeaderName = data.headerName;
+        } else {
+          csrfToken = null;
+        }
+        return csrfToken;
+      } catch {
+        csrfToken = null;
+        return null;
+      } finally {
+        csrfFetchCompleted = true;
+        csrfFetchInFlight = null;
+      }
+    })();
+  }
+  return csrfFetchInFlight;
 }
 
 async function getCsrf(): Promise<string | null> {
-  if (csrfToken) return csrfToken;
-  return fetchCsrfToken();
+  if (csrfFetchCompleted) return csrfToken;
+  return fetchCsrfTokenOnce();
 }
 
 /** Backend error response shape (4xx/5xx) */
@@ -785,8 +820,12 @@ export interface ProfileDTO {
   idNumber: string | null;
   address: string;
   city: string;
+  district?: string | null;
   state: string;
   pinCode: string;
+  village?: string | null;
+  postOffice?: string | null;
+  policeStation?: string | null;
   status: "PENDING" | "IN_PROGRESS" | "APPROVED" | "REJECTED";
   submittedAt: string | null;
   reviewedAt: string | null;
@@ -809,8 +848,12 @@ export interface ProfileReviewRequest {
   idNumber?: string | null;
   address: string;
   city: string;
+  district: string;
   state: string;
   pinCode: string;
+  village?: string | null;
+  postOffice?: string | null;
+  policeStation?: string | null;
 }
 
 /** Request body for PUT /api/profile (update profile, no submission) */
@@ -827,8 +870,12 @@ export interface ProfileUpdateRequest {
   idNumber?: string | null;
   address: string;
   city: string;
+  district: string;
   state: string;
   pinCode: string;
+  village?: string | null;
+  postOffice?: string | null;
+  policeStation?: string | null;
 }
 
 /** GET /api/profile — pass role as query param */

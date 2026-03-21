@@ -45,7 +45,7 @@ const DemoRoleSwitcher = () => {
   const current = roles.find(r => location.pathname.startsWith(r.path)) || roles[0];
 
   return (
-    <div ref={containerRef} className="fixed bottom-6 right-6 z-50">
+    <div ref={containerRef} data-demo-allow className="fixed bottom-6 right-6 z-50">
       {open && (
         <div className="mb-2 bg-card border border-border rounded-2xl shadow-2xl p-3 space-y-1 animate-fade-in min-w-[220px] max-h-[70vh] overflow-y-auto">
           <p className="text-xs font-semibold text-muted-foreground px-2 pb-1">Switch Dashboard & User</p>

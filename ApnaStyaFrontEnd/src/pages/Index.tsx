@@ -7,6 +7,8 @@ import PropertyCard from "@/components/property/PropertyCard";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
 import DemoModePopup from "@/features/demo/DemoModePopup";
 import { useDemoData } from "@/features/demo/DemoDataContext";
+import { HomeFeaturedLoadingNotice } from "@/components/home/HomeFeaturedLoadingNotice";
+import { FeaturedPropertiesSkeleton } from "@/components/home/FeaturedPropertiesSkeleton";
 import { Button } from "@/components/ui/button";
 import { properties, mapPropertyDtoToProperty, type Property } from "@/constants/properties";
 import { getFeaturedProperties } from "@/lib/api";
@@ -28,6 +30,8 @@ const Index = () => {
   const searchBarRef = useRef<SearchBarRef>(null);
   const [featuredProperties, setFeaturedProperties] = useState<Property[]>([]);
   const [featuredLoading, setFeaturedLoading] = useState(true);
+  /** User closed the floating “please wait” notice; loading UI (skeleton) continues until fetch completes */
+  const [featuredLoadingNoticeDismissed, setFeaturedLoadingNoticeDismissed] = useState(false);
 
   const staticFeatured = properties.filter((p) => p.isFeatured);
   const apiFeatured = featuredProperties;
@@ -39,6 +43,7 @@ const Index = () => {
       return;
     }
     setFeaturedLoading(true);
+    setFeaturedLoadingNoticeDismissed(false);
     getFeaturedProperties()
       .then((res) => {
         const raw = res as { data?: unknown[] };
@@ -170,9 +175,12 @@ const Index = () => {
             </p>
           </div>
           {featuredLoading ? (
-            <div className="text-center py-12">
-              <div className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent mb-3" />
-              <p className="text-sm text-muted-foreground">Loading featured properties…</p>
+            <div className="space-y-6">
+              <FeaturedPropertiesSkeleton count={6} />
+              <p className="text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
+                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
+                Loading the latest listings…
+              </p>
             </div>
           ) : displayProperties.length === 0 ? (
             <div className="text-center py-12">
@@ -198,6 +206,12 @@ const Index = () => {
 
       {/* Demo mode popup */}
       <DemoModePopup />
+
+      {/* Production: friendly notice while featured API loads (dismissible) */}
+      <HomeFeaturedLoadingNotice
+        open={featuredLoading && !demoMode && !featuredLoadingNoticeDismissed}
+        onDismiss={() => setFeaturedLoadingNoticeDismissed(true)}
+      />
 
       <Footer />
     </div>

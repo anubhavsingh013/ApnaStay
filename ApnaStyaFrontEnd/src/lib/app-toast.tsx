@@ -5,8 +5,9 @@
 import type { ReactNode } from "react";
 import toast from "react-hot-toast";
 
-const SUCCESS_MS = 4500;
-const ERROR_MS = 6000;
+const SUCCESS_MS = 1000;
+/** Errors dismiss a bit faster so they don’t linger */
+const ERROR_MS = 1000;
 
 function renderContent(message: string, description?: string): string | ReactNode {
   if (!description) return message;
@@ -23,7 +24,7 @@ export function toastSuccess(message: string, description?: string) {
   toast.success(renderContent(message, description), { duration: SUCCESS_MS });
 }
 
-/** Error notification */
+/** Error notification — ~3.5s (see `HotToaster` error toastOptions) */
 export function toastError(message: string, description?: string) {
   toast.error(renderContent(message, description), { duration: ERROR_MS });
 }

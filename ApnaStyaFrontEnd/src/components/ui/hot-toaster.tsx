@@ -30,7 +30,7 @@ export function HotToaster() {
           },
         },
         error: {
-          duration: 6000,
+          duration: 3500,
           className:
             "!border-destructive/30 !bg-red-50/95 dark:!bg-red-950/35 dark:!text-red-50 dark:!border-red-500/25",
           iconTheme: {

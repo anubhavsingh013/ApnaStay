@@ -85,7 +85,8 @@ export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableB
   useEffect(() => {
     if (initialEnabled !== undefined) {
       setEnabled(initialEnabled ?? false);
-      setLoading(initialEnabled === null);
+      // null = unknown from parent; do not keep spinner forever (parent can pass false in demo/offline)
+      setLoading(false);
     }
   }, [initialEnabled]);
 
@@ -227,9 +228,15 @@ export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableB
             Preparing 2FA setup…
           </div>
         ) : hideEnableButton ? (
-          <p className="text-sm text-amber-700 dark:text-amber-300 rounded-lg border border-amber-500/40 bg-amber-500/10 dark:bg-amber-500/20 px-3 py-2">
-            2FA is off. Click the 2FA badge above to turn on.
-          </p>
+          <div className="inline-flex max-w-sm items-start gap-2.5 rounded-xl border border-amber-500/35 bg-amber-500/[0.07] px-3 py-2.5 shadow-sm dark:border-amber-500/25 dark:bg-amber-950/35">
+            <ShieldOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
+            <div className="min-w-0 space-y-1">
+              <p className="text-sm font-medium text-amber-950 dark:text-amber-50">2FA is off</p>
+              <p className="text-xs leading-relaxed text-amber-800/95 dark:text-amber-200/90">
+                Tap the <span className="font-semibold">2FA off</span> pill next to your verification status on this page to start setup.
+              </p>
+            </div>
+          </div>
         ) : (
           <Button size="sm" onClick={handleEnableStart}>
             <ShieldCheck className="h-4 w-4 mr-1.5" /> Enable 2FA

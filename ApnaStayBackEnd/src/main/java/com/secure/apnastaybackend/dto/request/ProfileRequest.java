@@ -52,10 +52,22 @@ public class ProfileRequest {
     private String city;
 
     @Size(max = 100)
+    private String district;
+
+    @Size(max = 100)
     private String state;
 
     @Pattern(regexp = "^[0-9]{6}$", message = "Pin code must be 6 digits")
     @Size(max = 6)
     private String pinCode;
+
+    @Size(max = 100)
+    private String village;
+
+    @Size(max = 150)
+    private String postOffice;
+
+    @Size(max = 150)
+    private String policeStation;
 }
 

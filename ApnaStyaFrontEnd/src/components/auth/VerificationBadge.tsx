@@ -1,5 +1,8 @@
-import { Badge } from "@/components/ui/badge";
 import { ShieldCheck, Clock, XCircle, HelpCircle, CheckCircle } from "lucide-react";
+
+/** Shared with TwoFactorBadge so verification + 2FA pills align in profile headers */
+const statusPillClass =
+  "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium leading-none";
 
 export type VerificationStatus = "APPROVED" | "PENDING" | "IN_PROGRESS" | "REJECTED" | null;
 
@@ -26,7 +29,7 @@ export function VerificationBadge({ status, label, className = "", showIcon = tr
 
   if (status === "APPROVED" && approvedAsActiveStyle && !needsResubmit) {
     return (
-      <span className={`inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 px-2.5 py-1 text-xs font-medium ${className}`}>
+      <span className={`${statusPillClass} border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 ${className}`}>
         {showIcon && <CheckCircle className="h-3.5 w-3.5" />}
         {text}
       </span>
@@ -54,7 +57,7 @@ export function VerificationBadge({ status, label, className = "", showIcon = tr
       <button
         type="button"
         onClick={onVerifyClick}
-        className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-1 ${variantClasses} ${className}`}
+        className={`${statusPillClass} transition-colors focus:outline-none focus:ring-2 focus:ring-amber-500/50 focus:ring-offset-1 ${variantClasses} ${className}`}
       >
         {badgeContent}
       </button>
@@ -62,8 +65,6 @@ export function VerificationBadge({ status, label, className = "", showIcon = tr
   }
 
   return (
-    <Badge variant="outline" className={`gap-1 border ${variantClasses} ${className}`}>
-      {badgeContent}
-    </Badge>
+    <span className={`${statusPillClass} border ${variantClasses} ${className}`}>{badgeContent}</span>
   );
 }

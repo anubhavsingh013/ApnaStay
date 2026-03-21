@@ -1,4 +1,5 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useCallback, type ReactNode } from "react";
+import type { NavigateFunction } from "react-router-dom";
 import type { PropertyDTO } from "@/lib/api";
 import { mockProperties, mockUsers, mockRoles } from "@/constants/mockData";
 
@@ -67,9 +68,9 @@ export interface OwnerProfile {
   aadhar: string;
   mobile: string;
   email: string;
-  village: string;
-  postOffice: string;
-  policeStation: string;
+  /** Village / street / house (single field) */
+  address?: string;
+  city?: string;
   state: string;
   district: string;
   pincode: string;
@@ -89,6 +90,7 @@ export interface BrokerProfile {
   licenseNumber: string;
   address: string;
   city: string;
+  district?: string;
   state: string;
   pincode: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
@@ -109,6 +111,7 @@ export interface TenantProfile {
   idNumber: string;
   address: string;
   city: string;
+  district?: string;
   state: string;
   pincode: string;
   status: "PENDING" | "APPROVED" | "REJECTED";
@@ -141,6 +144,10 @@ interface DemoDataContextType {
   demoMode: boolean;
   /** Toggle demo mode. When turning OFF, optionally run onTurnOff (e.g. logout + redirect). */
   toggleDemoMode: (onTurnOff?: () => void) => void;
+  /** Turn off demo mode without toggling (syncs localStorage). */
+  disableDemoMode: () => void;
+  /** Exit demo preview and send the user to sign-in (e.g. when they try a real action). */
+  exitDemoAndSignIn: (navigate: NavigateFunction) => void;
 
   properties: PropertyDTO[];
   addProperty: (p: Omit<PropertyDTO, "id" | "createdAt" | "updatedAt">) => PropertyDTO;
@@ -222,15 +229,15 @@ const seedNotifications: Notification[] = [
 ];
 
 const seedBrokerProfiles: BrokerProfile[] = [
-  { id: 101, brokerUser: "amit_broker", name: "Amit Kumar", email: "amit.broker@gmail.com", mobile: "+91 98765 11111", firmName: "Prime Realty", licenseNumber: "RERA-KA-2024-001", address: "45, MG Road", city: "Bangalore", state: "Karnataka", pincode: "560001", status: "APPROVED", submittedAt: "2026-02-01T10:00:00Z", reviewedAt: "2026-02-02T12:00:00Z" },
+  { id: 101, brokerUser: "amit_broker", name: "Amit Kumar", email: "amit.broker@gmail.com", mobile: "+91 98765 11111", firmName: "Prime Realty", licenseNumber: "RERA-KA-2024-001", address: "45, MG Road", city: "Bangalore", district: "Bengaluru Urban", state: "Karnataka", pincode: "560001", status: "APPROVED", submittedAt: "2026-02-01T10:00:00Z", reviewedAt: "2026-02-02T12:00:00Z" },
 ];
 
 const seedTenantProfiles: TenantProfile[] = [
-  { id: 201, tenantUser: "sneha_tenant", name: "Sneha Sharma", gender: "Female", dob: "1995-05-15", email: "sneha@gmail.com", mobile: "+91 98765 43210", idType: "Aadhar", idNumber: "123456789123", address: "12, Indiranagar", city: "Bangalore", state: "Karnataka", pincode: "560038", status: "APPROVED", submittedAt: "2026-02-10T09:00:00Z", reviewedAt: "2026-02-11T10:00:00Z" },
+  { id: 201, tenantUser: "sneha_tenant", name: "Sneha Sharma", gender: "Female", dob: "1995-05-15", email: "sneha@gmail.com", mobile: "+91 98765 43210", idType: "Aadhar", idNumber: "123456789123", address: "12, Indiranagar", city: "Bangalore", district: "Bengaluru Urban", state: "Karnataka", pincode: "560038", status: "APPROVED", submittedAt: "2026-02-10T09:00:00Z", reviewedAt: "2026-02-11T10:00:00Z" },
 ];
 
 const seedOwnerProfiles: OwnerProfile[] = [
-  { id: 1, ownerUser: "rajesh_owner", name: "Rajesh Kumar", gender: "Male", dob: "1988-03-10", aadhar: "123456789012", mobile: "+91 98765 00001", email: "rajesh@gmail.com", village: "Koramangala", postOffice: "Koramangala HO", policeStation: "Koramangala", state: "KA", district: "Bengaluru Urban", pincode: "560034", status: "APPROVED", submittedAt: "2026-02-05T10:00:00Z", reviewedAt: "2026-02-06T12:00:00Z" },
+  { id: 1, ownerUser: "rajesh_owner", name: "Rajesh Kumar", gender: "Male", dob: "1988-03-10", aadhar: "123456789012", mobile: "+91 98765 00001", email: "rajesh@gmail.com", address: "H.No. 12, 4th Cross, Koramangala, near bus stand", city: "Bengaluru", state: "KA", district: "Bengaluru Urban", pincode: "560034", status: "APPROVED", submittedAt: "2026-02-05T10:00:00Z", reviewedAt: "2026-02-06T12:00:00Z" },
 ];
 
 export const DemoDataProvider = ({ children }: { children: ReactNode }) => {
@@ -256,6 +263,17 @@ export const DemoDataProvider = ({ children }: { children: ReactNode }) => {
       return next;
     });
   };
+
+  const disableDemoMode = useCallback(() => {
+    setDemoMode(false);
+    localStorage.setItem("apnastay_demo_mode", "false");
+  }, []);
+
+  const exitDemoAndSignIn = useCallback((navigate: NavigateFunction) => {
+    setDemoMode(false);
+    localStorage.setItem("apnastay_demo_mode", "false");
+    navigate("/login", { replace: true, state: { message: "Sign in to continue." } });
+  }, []);
 
   const addNotification = (n: Omit<Notification, "id" | "createdAt" | "read">) => {
     const newN: Notification = { ...n, id: Date.now(), createdAt: new Date().toISOString(), read: false };
@@ -447,7 +465,7 @@ export const DemoDataProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <DemoDataContext.Provider value={{
-      demoMode, toggleDemoMode,
+      demoMode, toggleDemoMode, disableDemoMode, exitDemoAndSignIn,
       properties, addProperty, updateProperty, deleteProperty, approveProperty, rejectProperty,
       users, updateUserRole, toggleUserLock, toggleUserEnabled, roles: mockRoles,
       complaints, raiseComplaint, updateComplaintStatus,

@@ -78,7 +78,7 @@ const Navbar = () => {
   };
 
   return (
-    <header ref={headerRef} className="sticky top-0 z-50 shadow-md bg-foreground">
+    <header ref={headerRef} data-demo-allow className="sticky top-0 z-50 shadow-md bg-foreground">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
         <ApnaStayLogo />
 
@@ -129,7 +129,7 @@ const Navbar = () => {
                   <ChevronDown className="h-4 w-4 text-emerald-300/90 shrink-0" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[10rem] w-52 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl">
+              <DropdownMenuContent data-demo-allow align="end" className="min-w-[10rem] w-52 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl">
                 <div className="px-2.5 py-2 mb-1 border-b border-slate-100 dark:border-slate-800">
                   <p className="text-xs font-medium text-muted-foreground">Signed in as</p>
                   <p className="text-sm font-semibold text-foreground truncate mt-0.5">{displayName}</p>
@@ -161,7 +161,7 @@ const Navbar = () => {
                   <ChevronDown className="h-4 w-4 text-emerald-400 shrink-0" />
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="min-w-[12rem] w-56 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl max-h-[70vh] overflow-y-auto">
+              <DropdownMenuContent data-demo-allow align="end" className="min-w-[12rem] w-56 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl max-h-[70vh] overflow-y-auto">
                 <p className="text-xs font-semibold text-muted-foreground px-2 pb-2">Switch profile</p>
                 {demoRoles.map((r) => (
                   <div key={r.label}>
@@ -269,7 +269,7 @@ const Navbar = () => {
                       <ChevronDown className="h-4 w-4 text-emerald-400 shrink-0" />
                     </button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="min-w-[12rem] w-56 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl max-h-[70vh] overflow-y-auto ml-4">
+                  <DropdownMenuContent data-demo-allow align="start" className="min-w-[12rem] w-56 p-2 shadow-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 rounded-xl max-h-[70vh] overflow-y-auto ml-4">
                     <p className="text-xs font-semibold text-muted-foreground px-2 pb-2">Switch profile</p>
                     {demoRoles.map((r) => (
                       <div key={r.label}>

@@ -66,18 +66,31 @@ public class Profile {
     @Column(name = "id_number", length = 50)
     private String idNumber;
 
-    @Column(length = 255)
-    private String address;
+    @Column(length = 100)
+    private String state;
 
     @Column(length = 100)
     private String city;
 
+    /** Revenue district / administrative district (mandatory on profile update). */
     @Column(length = 100)
-    private String state;
+    private String district;
+
+    @Column(length = 255)
+    private String address;
 
     @Column(name = "pin_code", length = 6)
     @Pattern(regexp = "^[0-9]{6}$", message = "Pin code must be 6 digits")
     private String pinCode;
+
+    @Column(length = 100)
+    private String village;
+
+    @Column(name = "post_office", length = 150)
+    private String postOffice;
+
+    @Column(name = "police_station", length = 150)
+    private String policeStation;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)

@@ -103,7 +103,7 @@ export function RaiseComplaintMuiFields({
               ))}
             </TextField>
           )}
-          {showAgainstSelect && propertyId && !againstLoading && againstOptions.length === 0 && (
+          {showAgainstSelect && propertyId > 0 && !againstLoading && againstOptions.length === 0 && (
             <Typography component="p" variant="caption" color="text.secondary" sx={{ gridColumn: "1 / -1" }}>
               No one associated with this property to select.
             </Typography>

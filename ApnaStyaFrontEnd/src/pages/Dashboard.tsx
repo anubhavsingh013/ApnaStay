@@ -6,6 +6,7 @@ import DemoRoleSwitcher, { getDemoUser, subscribeDemoUser } from "@/features/dem
 import PropertyCard from "@/components/property/PropertyCard";
 import { properties as staticProperties } from "@/constants/properties";
 import { useDemoData, type Complaint } from "@/features/demo/DemoDataContext";
+import { useExitDemoOnDashboardAction } from "@/features/demo/useExitDemoOnDashboardAction";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastSuccess, toastError } from "@/lib/app-toast";
 import {
@@ -34,6 +35,8 @@ import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
 import { DemoModeLoginPrompt } from "@/features/demo/DemoModeLoginPrompt";
 import { TenantProfileMuiForm } from "@/components/profile/TenantProfileMuiForm";
+import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
+import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
 import { RaiseComplaintMuiFields } from "@/components/dashboard/RaiseComplaintMuiFields";
 import { formatDob } from "@/lib/utils";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
@@ -67,7 +70,7 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, dashboardPath } = useAuth();
-  const { demoMode, properties, bookings, payments, makePayment, complaints, raiseComplaint, notifications, markNotificationRead, getNotificationsFor, isTenantProfileApproved, tenantProfiles, updateTenantProfile, submitTenantProfile } = useDemoData();
+  const { demoMode, exitDemoAndSignIn, properties, bookings, payments, makePayment, complaints, raiseComplaint, notifications, markNotificationRead, getNotificationsFor, isTenantProfileApproved, tenantProfiles, updateTenantProfile, submitTenantProfile } = useDemoData();
   const [activeTab, setActiveTab] = useState("overview");
   const [demoTenant, setDemoTenant] = useState(getDemoUser);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
@@ -80,7 +83,7 @@ const Dashboard = () => {
   const [profileUpdateDialogOpen, setProfileUpdateDialogOpen] = useState(false);
   const [profileSubmitForm, setProfileSubmitForm] = useState({
     fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", idType: "Aadhar", idNumber: "",
-    address: "", city: "", state: "", pinCode: "", stateCode: "",
+    address: "", city: "", district: "", state: "", pinCode: "",
   });
   const [submittingProfile, setSubmittingProfile] = useState(false);
   const [updatingProfile, setUpdatingProfile] = useState(false);
@@ -89,6 +92,8 @@ const Dashboard = () => {
   const [profile2faEnabled, setProfile2faEnabled] = useState<boolean | null>(null);
   const [twoFactorDialogOpen, setTwoFactorDialogOpen] = useState(false);
   const [demoLoginPromptOpen, setDemoLoginPromptOpen] = useState(false);
+  /** Custom copy when opening the demo sign-in prompt (e.g. Update profile) */
+  const [demoLoginPromptCopy, setDemoLoginPromptCopy] = useState<{ title?: string; message?: string }>({});
   const [profileUpdatedNeedsResubmit, setProfileUpdatedNeedsResubmit] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{
     open: boolean;
@@ -129,6 +134,8 @@ const Dashboard = () => {
   }, [user, dashboardPath, navigate]);
 
   const useRealApi = !demoMode && user;
+  useExitDemoOnDashboardAction(demoMode, exitDemoAndSignIn, navigate);
+  const profile2faForUi: boolean | null = !useRealApi ? (profile2faEnabled ?? false) : profile2faEnabled;
 
   const fetchProfileFromDb = () => {
     if (!useRealApi) return;
@@ -146,11 +153,12 @@ const Dashboard = () => {
           setApiProfileStatus((data.status as VerificationStatus) ?? null);
           const { countryCode, mobile } = parseMobileValue(data.mobile || "");
           const mobileFormValue = mobile ? `${countryCode}|${mobile}` : "";
-          const stateCode = indianStates.find((s) => s.name === data.state)?.code ?? "";
+          const sc = indianStates.find((s) => s.name === data.state)?.code ?? "";
+          const legacyAddr = [data.village, data.postOffice, data.policeStation].filter(Boolean).join(", ");
           setProfileSubmitForm({
             fullName: data.fullName || "", gender: data.gender || "Male", dateOfBirth: data.dateOfBirth || "",
             aadharNumber: data.aadharNumber || "", mobile: mobileFormValue, idType: data.idType || "Aadhar", idNumber: data.idNumber || "",
-            address: data.address || "", city: data.city || "", state: data.state || "", pinCode: data.pinCode || "", stateCode,
+            address: (data.address && data.address.trim()) || legacyAddr || "", city: data.city || "", district: data.district || "", state: sc, pinCode: data.pinCode || "",
           });
         } else {
           setApiProfile(null);
@@ -198,7 +206,7 @@ const Dashboard = () => {
     if (profileSubmitDialogOpen && demoMode && demoProfile) {
       const { countryCode, mobile } = parseMobileValue(demoProfile.mobile || "");
       const mobileFormValue = mobile ? `${countryCode || "91"}|${mobile}` : "";
-      const stateCode = indianStates.find((s) => s.name === demoProfile.state)?.code ?? "";
+      const sc = indianStates.find((s) => s.name === demoProfile.state)?.code ?? "";
       setProfileSubmitForm({
         fullName: demoProfile.name || "",
         gender: demoProfile.gender || "Male",
@@ -209,9 +217,9 @@ const Dashboard = () => {
         idNumber: demoProfile.idNumber || "",
         address: demoProfile.address || "",
         city: demoProfile.city || "",
-        state: demoProfile.state || "",
+        district: demoProfile.district || "",
+        state: sc,
         pinCode: demoProfile.pincode || "",
-        stateCode,
       });
     }
   }, [profileSubmitDialogOpen, demoMode, demoProfile]);
@@ -225,7 +233,7 @@ const Dashboard = () => {
     if (demoMode && demoProfile) {
       const { countryCode, mobile } = parseMobileValue(demoProfile.mobile || "");
       const mobileFormValue = mobile ? `${countryCode || "91"}|${mobile}` : "";
-      const stateCode = indianStates.find((s) => s.name === demoProfile.state)?.code ?? "";
+      const sc = indianStates.find((s) => s.name === demoProfile.state)?.code ?? "";
       const newForm = {
         fullName: demoProfile.name || "",
         gender: demoProfile.gender || "Male",
@@ -236,16 +244,16 @@ const Dashboard = () => {
         idNumber: demoProfile.idNumber || "",
         address: demoProfile.address || "",
         city: demoProfile.city || "",
-        state: demoProfile.state || "",
+        district: demoProfile.district || "",
+        state: sc,
         pinCode: demoProfile.pincode || "",
-        stateCode,
       };
       setProfileSubmitForm(newForm);
       profileUpdateInitialRef.current = JSON.stringify(newForm);
     } else if (useRealApi && apiProfile) {
       const { countryCode, mobile } = parseMobileValue(apiProfile.mobile || "");
       const mobileFormValue = mobile ? `${countryCode || "91"}|${mobile}` : "";
-      const stateCode = indianStates.find((s) => s.name === apiProfile.state)?.code ?? "";
+      const sc = indianStates.find((s) => s.name === apiProfile.state)?.code ?? "";
       const newForm = {
         fullName: apiProfile.fullName || "",
         gender: apiProfile.gender || "Male",
@@ -254,16 +262,19 @@ const Dashboard = () => {
         mobile: mobileFormValue,
         idType: apiProfile.idType || "Aadhar",
         idNumber: apiProfile.idNumber || "",
-        address: apiProfile.address || "",
+        address:
+          (apiProfile.address && apiProfile.address.trim()) ||
+          [apiProfile.village, apiProfile.postOffice, apiProfile.policeStation].filter(Boolean).join(", ") ||
+          "",
         city: apiProfile.city || "",
-        state: apiProfile.state || "",
+        district: apiProfile.district || "",
+        state: sc,
         pinCode: apiProfile.pinCode || "",
-        stateCode,
       };
       setProfileSubmitForm(newForm);
       profileUpdateInitialRef.current = JSON.stringify(newForm);
     } else {
-      setProfileSubmitForm((f) => ({ ...f, fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", idType: "Aadhar", idNumber: "", address: "", city: "", state: "", pinCode: "", stateCode: "" }));
+      setProfileSubmitForm((f) => ({ ...f, fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", idType: "Aadhar", idNumber: "", address: "", city: "", district: "", state: "", pinCode: "" }));
       profileUpdateInitialRef.current = null;
     }
   }, [profileUpdateDialogOpen, demoMode, demoProfile, useRealApi, apiProfile]);
@@ -452,12 +463,20 @@ const Dashboard = () => {
   };
 
   const handleUpdateProfileClick = () => {
+    if (!hasProfileUpdateFormChanged()) {
+      toastError("No changes", "Update at least one field before saving.");
+      return;
+    }
     const f = profileSubmitForm;
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
-    const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
-    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !stateName?.trim()) {
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, state).");
+      return;
+    }
+    if (!isProfileLocationComplete(f)) {
+      toastError("Missing address", "State, city, district, pin code, and village/street/house are required.");
       return;
     }
     if (aadharVal.length !== 12) {
@@ -472,12 +491,20 @@ const Dashboard = () => {
   };
 
   const handleUpdateProfile = () => {
+    if (!hasProfileUpdateFormChanged()) {
+      toastError("No changes", "Update at least one field before saving.");
+      return;
+    }
     const f = profileSubmitForm;
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
-    const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
-    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !stateName?.trim()) {
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, state).");
+      return;
+    }
+    if (!isProfileLocationComplete(f)) {
+      toastError("Missing address", "State, city, district, pin code, and village/street/house are required.");
       return;
     }
     if (aadharVal.length !== 12) {
@@ -498,8 +525,9 @@ const Dashboard = () => {
         mobile: mobileStr,
         idType: f.idType || "Aadhar",
         idNumber: aadharVal || f.idNumber || "",
-        address: f.address.trim(),
+        address: (f.address || "").trim(),
         city: f.city.trim(),
+        district: f.district.trim(),
         state: stateName.trim(),
         pincode: f.pinCode.trim(),
       });
@@ -520,10 +548,14 @@ const Dashboard = () => {
       licenseNumber: null,
       idType: f.idType || null,
       idNumber: aadharVal || null,
-      address: f.address.trim(),
+      address: (f.address || "").trim(),
       city: f.city.trim(),
+      district: f.district.trim(),
       state: stateName.trim(),
       pinCode: f.pinCode.trim(),
+      village: null,
+      postOffice: null,
+      policeStation: null,
     })
       .then((res) => {
         const raw = res as { data?: ProfileDTO; success?: boolean; message?: string; timestamp?: string };
@@ -537,11 +569,12 @@ const Dashboard = () => {
           setProfileError(null);
           const { countryCode, mobile } = parseMobileValue(data.mobile || "");
           const mobileFormValue = mobile ? `${countryCode}|${mobile}` : "";
-          const stateCode = indianStates.find((s) => s.name === data.state)?.code ?? "";
+          const sc = indianStates.find((s) => s.name === data.state)?.code ?? "";
+          const legacyAddr = [data.village, data.postOffice, data.policeStation].filter(Boolean).join(", ");
           setProfileSubmitForm({
             fullName: data.fullName || "", gender: data.gender || "Male", dateOfBirth: data.dateOfBirth || "",
             aadharNumber: data.aadharNumber || "", mobile: mobileFormValue, idType: data.idType || "Aadhar", idNumber: data.idNumber || "",
-            address: data.address || "", city: data.city || "", state: data.state || "", pinCode: data.pinCode || "", stateCode,
+            address: (data.address && data.address.trim()) || legacyAddr || "", city: data.city || "", district: data.district || "", state: sc, pinCode: data.pinCode || "",
           });
         }
         toastSuccess("Profile updated", "Your profile has been updated. Click Verify to submit for review.");
@@ -557,9 +590,13 @@ const Dashboard = () => {
     const f = profileSubmitForm;
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
-    const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
-    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !stateName?.trim()) {
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, state).");
+      return;
+    }
+    if (!isProfileLocationComplete(f)) {
+      toastError("Missing address", "State, city, district, pin code, and village/street/house are required.");
       return;
     }
     if (aadharVal.length !== 12) {
@@ -580,8 +617,9 @@ const Dashboard = () => {
         mobile: mobileStr,
         idType: f.idType || "Aadhar",
         idNumber: aadharVal || f.idNumber || "",
-        address: f.address.trim(),
+        address: (f.address || "").trim(),
         city: f.city.trim(),
+        district: f.district.trim(),
         state: stateName.trim(),
         pincode: f.pinCode.trim(),
       });
@@ -602,10 +640,14 @@ const Dashboard = () => {
       licenseNumber: null,
       idType: f.idType || null,
       idNumber: f.idNumber || null,
-      address: f.address.trim(),
+      address: (f.address || "").trim(),
       city: f.city.trim(),
+      district: f.district.trim(),
       state: stateName.trim(),
       pinCode: f.pinCode.trim(),
+      village: null,
+      postOffice: null,
+      policeStation: null,
     })
       .then((res) => {
         const raw = res as { data?: ProfileDTO; message?: string };
@@ -629,14 +671,15 @@ const Dashboard = () => {
     const f = profileSubmitForm;
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
-    const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
-    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) return false;
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !stateName?.trim()) return false;
+    if (!isProfileLocationComplete(f)) return false;
     if (aadharVal.length !== 12) return false;
     if (stateName && !isPincodeValidForState(f.pinCode.trim(), stateName)) return false;
     return true;
   };
   const hasProfileUpdateFormChanged = () => {
-    if (!profileUpdateInitialRef.current) return true;
+    if (!profileUpdateInitialRef.current) return false;
     return JSON.stringify(profileSubmitForm) !== profileUpdateInitialRef.current;
   };
   const canSaveProfileUpdate = profileUpdateDialogOpen && isProfileUpdateFormValid() && hasProfileUpdateFormChanged();
@@ -661,11 +704,14 @@ const Dashboard = () => {
       mobile: mobile ? `${countryCode || "91"}|${mobile}` : "",
       idType: apiProfile.idType || "Aadhar",
       idNumber: apiProfile.idNumber || "",
-      address: apiProfile.address || "",
+      address:
+        (apiProfile.address && apiProfile.address.trim()) ||
+        [apiProfile.village, apiProfile.postOffice, apiProfile.policeStation].filter(Boolean).join(", ") ||
+        "",
       city: apiProfile.city || "",
-      state: apiProfile.state || "",
+      district: apiProfile.district || "",
+      state: sc,
       pinCode: apiProfile.pinCode || "",
-      stateCode: sc,
     });
     setVerifySubmitDialogOpen(true);
   };
@@ -677,7 +723,7 @@ const Dashboard = () => {
 
       <div className="container mx-auto px-4 py-4 md:py-8">
         {demoMode && (
-          <div className="mb-4 p-3 bg-accent/50 border border-accent rounded-xl flex items-center gap-2 text-sm text-accent-foreground">
+          <div data-demo-allow className="mb-4 p-3 bg-accent/50 border border-accent rounded-xl flex items-center gap-2 text-sm text-accent-foreground">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span><strong>Demo Mode</strong> — Viewing as <strong>{currentTenant}</strong></span>
           </div>
@@ -731,7 +777,7 @@ const Dashboard = () => {
         </div>
 
         {/* Mobile horizontal tabs */}
-        <div className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
+        <div data-demo-allow className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
           {tabs.map((t) => (
             <button
               key={t.id}
@@ -749,7 +795,7 @@ const Dashboard = () => {
 
         <div className="flex gap-6">
           {/* Desktop sidebar */}
-          <aside className="hidden md:block w-56 shrink-0">
+          <aside data-demo-allow className="hidden md:block w-56 shrink-0">
             <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 sticky top-20 shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 ring-1 ring-slate-100 dark:ring-slate-800/80 border-l-4 border-l-sky-500/80 dark:border-l-sky-400/60">
               <div className="flex items-center gap-3 pb-3 border-b border-slate-200/80 dark:border-slate-700/80 mb-3">
                 <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-sky-600/10 dark:from-sky-400/25 dark:to-sky-500/15 flex items-center justify-center ring-2 ring-sky-400/20 dark:ring-sky-500/30 shrink-0"><User className="h-5 w-5 text-sky-600 dark:text-sky-400" /></div>
@@ -787,7 +833,7 @@ const Dashboard = () => {
 
             {activeTab === "overview" && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div data-demo-allow className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { icon: Heart, label: "My Properties", value: myRentedProperties.length, sub: null, iconBg: "bg-emerald-100 dark:bg-emerald-900/30", iconColor: "text-emerald-600 dark:text-emerald-400", tab: "my-properties" },
                     { icon: CalendarDays, label: "Bookings", value: myBookings.length, sub: myBookings.filter(b => b.status === "REQUESTED" || b.status === "APPROVED").length > 0 ? `${myBookings.filter(b => b.status === "REQUESTED" || b.status === "APPROVED").length} active` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "bookings" },
@@ -919,27 +965,30 @@ const Dashboard = () => {
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                   <div className="flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
                           <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                         </div>
-                        <div className="min-w-0">
+                        <div>
                           <h2 className="text-lg font-bold text-foreground">My Complaints</h2>
-                          <p className="text-xs text-muted-foreground">View and track complaints. Click a row for details and messages.</p>
+                          <p className="text-xs text-muted-foreground">View and track complaints. Click a row to open details.</p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 w-full">
+                    <div className="flex flex-wrap items-center gap-2">
                       <StatusFilterDropdown value={complaintStatusFilter} onChange={setComplaintStatusFilter} />
-                      <button
+                      <Button
                         type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-9 min-w-[11rem] shrink-0 rounded-full border-emerald-500/50 bg-transparent px-4 text-sm font-medium text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
                         onClick={() => setComplaintDialog(true)}
                         disabled={apiComplaintsLoading && Boolean(useRealApi)}
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors shrink-0"
                       >
-                        <Plus className="h-3.5 w-3.5" /> Raise
-                      </button>
+                        <Plus className="h-4 w-4" />
+                        Raise complaint
+                      </Button>
                     </div>
                   </div>
                 </div>
@@ -951,54 +1000,83 @@ const Dashboard = () => {
                     <p className="text-sm font-medium text-foreground">No complaints{complaintStatusFilter ? ` with this status` : ""}</p>
                     <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">{complaintStatusFilter ? "Try changing the filter or raise a new complaint." : "You have not raised any complaints. Use the button above to raise one if needed."}</p>
                     {!complaintStatusFilter && (
-                      <button
+                      <Button
                         type="button"
-                        className="mt-4 inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                        variant="outline"
+                        size="sm"
+                        className="mt-4 h-9 min-w-[11rem] rounded-full border-emerald-500/50 bg-transparent px-4 text-sm font-medium text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700 dark:border-emerald-500/40 dark:text-emerald-400 dark:hover:bg-emerald-900/20 dark:hover:text-emerald-300"
                         onClick={() => setComplaintDialog(true)}
                       >
-                        <Plus className="h-3.5 w-3.5" /> Raise complaint
-                      </button>
+                        <Plus className="h-4 w-4" />
+                        Raise complaint
+                      </Button>
                     )}
                   </div>
                 ) : (
                   <div className="space-y-3">
-                    {myComplaints.map((c: ComplaintDTO | (Complaint & { subject?: string; relatedUserName?: string })) => {
-                      const subject = "subject" in c && c.subject ? c.subject : (c as Complaint).title;
-                      const raisedBy = "raisedByUserName" in c ? (c as ComplaintDTO).raisedByUserName : (c as Complaint).raisedBy;
-                      const against = "relatedUserName" in c ? (c as ComplaintDTO).relatedUserName : (c as Complaint).againstUser;
-                      const pid = "propertyId" in c ? (c as ComplaintDTO).propertyId : (c as Complaint).propertyId;
-                      const propertyTitle = useRealApi && pid ? (apiPropertiesForComplaint.find((p) => p.id === pid)?.title ?? (c as Complaint).propertyTitle ?? (pid ? `Property #${pid}` : "")) : ((c as Complaint).propertyTitle || (pid ? `Property #${pid}` : ""));
-                      const priorityCls = c.priority === "HIGH" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300" : c.priority === "MEDIUM" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300" : "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200 border-slate-300";
+                    {myComplaints.map((c) => {
+                      const ext = c as ComplaintDTO & Complaint & { title?: string; raisedBy?: string; againstUser?: string; propertyTitle?: string };
+                      const subject = ext.subject ?? ext.title ?? "";
+                      const raisedBy = ext.raisedByUserName ?? ext.raisedBy ?? "";
+                      const related = ext.relatedUserName ?? ext.againstUser ?? "";
+                      const propLabel = ext.propertyId
+                        ? (ext.propertyTitle ?? (useRealApi ? apiPropertiesForComplaint.find((p) => p.id === ext.propertyId)?.title : undefined) ?? `Property #${ext.propertyId}`)
+                        : (ext.propertyTitle ?? "");
+                      const statusCls =
+                        ext.status === "OPEN"
+                          ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300"
+                          : ext.status === "IN_PROGRESS"
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300"
+                            : ext.status === "RESOLVED" || ext.status === "CLOSED"
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 border-emerald-300"
+                              : "bg-muted text-muted-foreground";
+                      const priorityCls =
+                        ext.priority === "HIGH"
+                          ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300"
+                          : ext.priority === "MEDIUM"
+                            ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300"
+                            : "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200 border-slate-300";
                       return (
                         <div
-                          key={c.id}
+                          key={ext.id}
                           role="button"
                           tabIndex={0}
                           onClick={() => setDetailItem({ type: "complaint", data: c })}
-                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailItem({ type: "complaint", data: c }); } }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setDetailItem({ type: "complaint", data: c });
+                            }
+                          }}
                           className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-4 shadow-sm hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all cursor-pointer active:scale-[0.995]"
                         >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
                               <p className="text-sm font-semibold text-card-foreground truncate">{subject}</p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                {raisedBy === tenantForData ? `Against: ${against || "—"}` : `By: ${raisedBy || "—"}`} • {propertyTitle || "—"}
+                                {raisedBy} → {related} • {propLabel}
                               </p>
                             </div>
                             <div className="flex flex-col items-end gap-1.5 shrink-0">
-                              <Badge variant="outline" className={`text-[10px] border ${priorityCls}`}>{c.priority}</Badge>
-                              {(c.status === "RESOLVED" || c.status === "CLOSED") ? (
+                              <Badge variant="outline" className={`text-[10px] border ${priorityCls}`}>
+                                {ext.priority}
+                              </Badge>
+                              {ext.status === "RESOLVED" || ext.status === "CLOSED" ? (
                                 <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
-                                  <CheckCircle className="h-3.5 w-3.5" /> {c.status}
+                                  <CheckCircle className="h-3.5 w-3.5" /> {ext.status}
                                 </span>
-                              ) : c.status === "OPEN" ? (
-                                <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">{c.status}</span>
-                              ) : c.status === "IN_PROGRESS" ? (
-                                <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                                  <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
+                              ) : ext.status === "OPEN" ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">
+                                  {ext.status}
+                                </span>
+                              ) : ext.status === "IN_PROGRESS" ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                                  <Clock className="h-3.5 w-3.5" /> In progress
                                 </span>
                               ) : (
-                                <Badge variant="outline" className="text-[10px]">{c.status}</Badge>
+                                <Badge variant="outline" className={`text-[10px] border ${statusCls}`}>
+                                  {ext.status}
+                                </Badge>
                               )}
                             </div>
                           </div>
@@ -1037,12 +1115,43 @@ const Dashboard = () => {
                     <div className="flex flex-wrap items-center gap-3">
                       <h2 className="text-xl font-bold text-foreground tracking-tight">My Profile</h2>
                       <VerificationBadge status={verificationStatus} showIcon className="text-xs" approvedAsActiveStyle needsResubmit={profileUpdatedNeedsResubmit} onVerifyClick={handleVerifyClick} />
-                      <TwoFactorBadge enabled={profile2faEnabled ?? false} className="text-xs" onEnableClick={(profile2faEnabled === false) ? (demoMode ? () => setDemoLoginPromptOpen(true) : () => setTwoFactorDialogOpen(true)) : undefined} />
+                      <TwoFactorBadge enabled={profile2faForUi} className="text-xs" onEnableClick={(profile2faForUi === false) ? (demoMode ? () => { setDemoLoginPromptCopy({}); setDemoLoginPromptOpen(true); } : () => setTwoFactorDialogOpen(true)) : undefined} />
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => { if (demoMode) { setDemoLoginPromptOpen(true); return; } if (demoProfile) { const { countryCode, mobile } = parseMobileValue(demoProfile.mobile || ""); const sc = indianStates.find((s) => s.name === demoProfile.state)?.code ?? ""; setProfileSubmitForm({ fullName: demoProfile.name || "", gender: demoProfile.gender || "Male", dateOfBirth: demoProfile.dob || "", aadharNumber: demoProfile.idNumber || "", mobile: mobile ? `${countryCode || "91"}|${mobile}` : "", idType: demoProfile.idType || "Aadhar", idNumber: demoProfile.idNumber || "", address: demoProfile.address || "", city: demoProfile.city || "", state: demoProfile.state || "", pinCode: demoProfile.pincode || "", stateCode: sc }); } else if (apiProfile) { const { countryCode, mobile } = parseMobileValue(apiProfile.mobile || ""); const sc = indianStates.find((s) => s.name === apiProfile.state)?.code ?? ""; setProfileSubmitForm({ fullName: apiProfile.fullName || "", gender: apiProfile.gender || "Male", dateOfBirth: apiProfile.dateOfBirth || "", aadharNumber: apiProfile.aadharNumber || "", mobile: mobile ? `${countryCode || "91"}|${mobile}` : "", idType: apiProfile.idType || "Aadhar", idNumber: apiProfile.idNumber || "", address: apiProfile.address || "", city: apiProfile.city || "", state: apiProfile.state || "", pinCode: apiProfile.pinCode || "", stateCode: sc }); } setProfileUpdateDialogOpen(true); }}
+                        data-demo-allow
+                        onClick={() => {
+                          if (demoMode) {
+                            setDemoLoginPromptCopy({
+                              title: "Sign in to update your profile",
+                              message: "Profile changes require a real account. Sign in to continue, or cancel to keep browsing the demo.",
+                            });
+                            setDemoLoginPromptOpen(true);
+                            return;
+                          }
+                          if (demoProfile) {
+                            const { countryCode, mobile } = parseMobileValue(demoProfile.mobile || "");
+                            const sc = indianStates.find((s) => s.name === demoProfile.state)?.code ?? "";
+                            setProfileSubmitForm({
+                              fullName: demoProfile.name || "", gender: demoProfile.gender || "Male", dateOfBirth: demoProfile.dob || "", aadharNumber: demoProfile.idNumber || "",
+                              mobile: mobile ? `${countryCode || "91"}|${mobile}` : "", idType: demoProfile.idType || "Aadhar", idNumber: demoProfile.idNumber || "",
+                              address: demoProfile.address || "", city: demoProfile.city || "", district: demoProfile.district || "",
+                              state: sc, pinCode: demoProfile.pincode || "",
+                            });
+                          } else if (apiProfile) {
+                            const { countryCode, mobile } = parseMobileValue(apiProfile.mobile || "");
+                            const sc = indianStates.find((s) => s.name === apiProfile.state)?.code ?? "";
+                            const legacyAddr = [apiProfile.village, apiProfile.postOffice, apiProfile.policeStation].filter(Boolean).join(", ");
+                            setProfileSubmitForm({
+                              fullName: apiProfile.fullName || "", gender: apiProfile.gender || "Male", dateOfBirth: apiProfile.dateOfBirth || "", aadharNumber: apiProfile.aadharNumber || "",
+                              mobile: mobile ? `${countryCode || "91"}|${mobile}` : "", idType: apiProfile.idType || "Aadhar", idNumber: apiProfile.idNumber || "",
+                              address: (apiProfile.address && apiProfile.address.trim()) || legacyAddr || "", city: apiProfile.city || "", district: apiProfile.district || "",
+                              state: sc, pinCode: apiProfile.pinCode || "",
+                            });
+                          }
+                          setProfileUpdateDialogOpen(true);
+                        }}
                         disabled={useRealApi && profileLoading}
                         className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 disabled:opacity-50 disabled:pointer-events-none px-4 py-1.5 text-xs font-medium transition-colors min-w-[140px] justify-center"
                       >
@@ -1217,7 +1326,15 @@ const Dashboard = () => {
                                 <p className="text-xs text-muted-foreground mb-4">Update your details and submit again for review. Use the buttons above or retry to load saved details.</p>
                                 <div className="flex flex-wrap gap-2 justify-center">
                                   {useRealApi && <Button size="sm" variant="outline" onClick={() => fetchProfileFromDb()}>Retry load</Button>}
-                                  <Button size="sm" variant="outline" onClick={() => setProfileUpdateDialogOpen(true)}>Update profile</Button>
+                                  <Button size="sm" variant="outline" data-demo-allow onClick={() => {
+                                    if (demoMode) {
+                                      setDemoLoginPromptCopy({
+                                        title: "Sign in to update your profile",
+                                        message: "Profile changes require a real account. Sign in to continue, or cancel to keep browsing the demo.",
+                                      });
+                                      setDemoLoginPromptOpen(true);
+                                    } else setProfileUpdateDialogOpen(true);
+                                  }}>Update profile</Button>
                                 </div>
                               </>
                             ) : (
@@ -1227,7 +1344,16 @@ const Dashboard = () => {
                                 <div className="flex flex-wrap justify-center gap-2">
                                   <button
                                     type="button"
-                                    onClick={() => setProfileUpdateDialogOpen(true)}
+                                    data-demo-allow
+                                    onClick={() => {
+                                      if (demoMode) {
+                                        setDemoLoginPromptCopy({
+                                          title: "Sign in to update your profile",
+                                          message: "Profile changes require a real account. Sign in to continue, or cancel to keep browsing the demo.",
+                                        });
+                                        setDemoLoginPromptOpen(true);
+                                      } else setProfileUpdateDialogOpen(true);
+                                    }}
                                     className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
                                   >
                                     <Pencil className="h-3.5 w-3.5" />
@@ -1246,25 +1372,9 @@ const Dashboard = () => {
                   </div>
                 )}
 
-                {myRentedProperties.length > 0 && (
-                  <div className="mt-6 pt-6 border-t border-slate-200/80 dark:border-slate-700/80">
-                    <h3 className="text-sm font-semibold text-foreground mb-2">My Rented Properties</h3>
-                    <div className="space-y-2">
-                      {myRentedProperties.map(p => (
-                        <div key={p.id} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800/30 border border-slate-200/80 dark:border-slate-700/80">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium text-secondary-foreground truncate">{p.title}</p>
-                            <p className="text-xs text-muted-foreground">Owner: {p.ownerUserName}</p>
-                          </div>
-                          <Badge className="shrink-0">Rented</Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {!profileLoading && (
                   <div className="mt-8">
-                    <TwoFactorSettings initialEnabled={profile2faEnabled} onEnabledChange={setProfile2faEnabled} hideEnableButton />
+                    <TwoFactorSettings initialEnabled={profile2faForUi} onEnabledChange={setProfile2faEnabled} hideEnableButton />
                   </div>
                 )}
                 </div>
@@ -1333,35 +1443,21 @@ const Dashboard = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Update profile (tenant, real API) — same form, PUT only */}
-      <Dialog open={profileUpdateDialogOpen} onOpenChange={setProfileUpdateDialogOpen}>
-        <DialogContent
-          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
-          onPointerDownOutside={(e) => {
-            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
-          }}
-        >
-          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
-            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Update profile</DialogTitle></DialogHeader>
-            <p className="text-sm leading-relaxed text-muted-foreground">Update your profile details. Click the Verify badge above to submit for review.</p>
-          </div>
-          <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
-            <ThemeProvider theme={tenantProfileMuiTheme}>
-              <TenantProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
-            </ThemeProvider>
-          </div>
-          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
-            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
-              <Button variant="outline" onClick={() => setProfileUpdateDialogOpen(false)} className="min-h-10 w-full border-2 border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 sm:w-auto">
-                Cancel
-              </Button>
-              <Button onClick={handleUpdateProfileClick} disabled={!canSaveProfileUpdate || updatingProfile} className="min-h-10 w-full border-2 border-emerald-600 dark:border-emerald-500 bg-emerald-600 dark:bg-emerald-700 text-white hover:bg-emerald-700 dark:hover:bg-emerald-600 sm:w-auto">
-                {updatingProfile ? "Saving..." : <><CheckCircle className="h-4 w-4 mr-2" /> Save</>}
-              </Button>
-            </DialogFooter>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <ProfileUpdateDialog
+        open={profileUpdateDialogOpen}
+        onOpenChange={setProfileUpdateDialogOpen}
+        description="Update your profile details. Click the Verify badge above to submit for review."
+        saveDisabled={!canSaveProfileUpdate}
+        saving={updatingProfile}
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleUpdateProfileClick();
+        }}
+      >
+        <ThemeProvider theme={tenantProfileMuiTheme}>
+          <TenantProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
+        </ThemeProvider>
+      </ProfileUpdateDialog>
 
       {/* Confirm Action Dialog */}
       <Dialog open={confirmAction.open} onOpenChange={(open) => !open && setConfirmAction((p) => ({ ...p, open: false }))}>
@@ -1573,7 +1669,17 @@ const Dashboard = () => {
         </>
       )}
 
-      {demoMode && <DemoModeLoginPrompt open={demoLoginPromptOpen} onOpenChange={setDemoLoginPromptOpen} message="Please sign in to access the complete feature. Demo mode shows a preview only." />}
+      {demoMode && (
+        <DemoModeLoginPrompt
+          open={demoLoginPromptOpen}
+          onOpenChange={(open) => {
+            setDemoLoginPromptOpen(open);
+            if (!open) setDemoLoginPromptCopy({});
+          }}
+          title={demoLoginPromptCopy.title}
+          message={demoLoginPromptCopy.message ?? "Please sign in to access the complete feature. Demo mode shows a preview only."}
+        />
+      )}
       {useRealApi && (
         <Dialog open={twoFactorDialogOpen} onOpenChange={setTwoFactorDialogOpen}>
           <DialogContent className="max-w-md">

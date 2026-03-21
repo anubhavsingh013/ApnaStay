@@ -4,6 +4,7 @@ import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher, { setDemoUser } from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData, type AdminProfileItem, type OwnerProfile, type BrokerProfile, type TenantProfile } from "@/features/demo/DemoDataContext";
+import { useExitDemoOnDashboardAction } from "@/features/demo/useExitDemoOnDashboardAction";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastSuccess, toastError } from "@/lib/app-toast";
 import {
@@ -69,6 +70,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { indianStates, isPincodeValidForState } from "@/constants/indianStates";
 import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
+import { ComplaintDetailStatusButtons } from "@/components/dashboard/ComplaintDetailStatusButtons";
 
 const tabs = [
   { label: "Overview", icon: Building2, id: "overview" },
@@ -135,6 +137,7 @@ const AdminDashboard = () => {
   const { user, isAdmin } = useAuth();
   const {
     demoMode,
+    exitDemoAndSignIn,
     properties, addProperty: demoAddProperty, updateProperty: demoUpdateProperty, approveProperty, rejectProperty, deleteProperty,
     users: demoUsers, updateUserRole, toggleUserLock, toggleUserEnabled, roles: demoRoles,
     complaints, updateComplaintStatus, payments,
@@ -212,6 +215,9 @@ const AdminDashboard = () => {
   const displayName = demoMode ? "admin_user" : (user?.username ?? "Admin");
   const decodedToken = getDecodedToken();
   const useRealApi = !demoMode && isAdmin;
+  useExitDemoOnDashboardAction(demoMode, exitDemoAndSignIn, navigate);
+  /** Demo / no API: avoid perpetual null → spinners on 2FA badge and settings */
+  const account2faForUi: boolean | null = !useRealApi ? (account2faEnabled ?? false) : account2faEnabled;
   const usersList = useRealApi ? apiUsers : (demoUsers as unknown as (AdminUserListItem & { role?: { roleId: number; roleName: string } })[]);
   const rolesList = useRealApi ? apiRoles : demoRoles;
 
@@ -929,7 +935,7 @@ const AdminDashboard = () => {
 
       <div className="container mx-auto px-4 py-4 md:py-8">
         {demoMode && (
-          <div className="mb-4 p-3 bg-accent/50 border border-accent rounded-xl flex items-center gap-2 text-sm text-accent-foreground">
+          <div data-demo-allow className="mb-4 p-3 bg-accent/50 border border-accent rounded-xl flex items-center gap-2 text-sm text-accent-foreground">
             <AlertCircle className="h-4 w-4 shrink-0" />
             <span><strong>Demo Mode</strong> — Viewing as <strong>admin_user</strong></span>
           </div>
@@ -940,7 +946,7 @@ const AdminDashboard = () => {
           <p className="text-sm text-muted-foreground mt-1">Manage users, properties, requests & complaints</p>
         </div>
 
-        <div className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
+        <div data-demo-allow className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
           {tabs.map((t) => (
             <button key={t.id} onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
@@ -953,7 +959,7 @@ const AdminDashboard = () => {
         </div>
 
         <div className="flex gap-6">
-          <aside className="hidden md:block w-56 shrink-0">
+          <aside data-demo-allow className="hidden md:block w-56 shrink-0">
             <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 sticky top-20 shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 ring-1 ring-slate-100 dark:ring-slate-800/80 border-l-4 border-l-sky-500/80 dark:border-l-sky-400/60">
               <div className="flex items-center gap-3 pb-3 border-b border-slate-200/80 dark:border-slate-700/80 mb-3">
                 <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-sky-600/10 dark:from-sky-400/25 dark:to-sky-500/15 flex items-center justify-center ring-2 ring-sky-400/20 dark:ring-sky-500/30"><ShieldCheck className="h-5 w-5 text-sky-600 dark:text-sky-400" /></div>
@@ -979,7 +985,7 @@ const AdminDashboard = () => {
           <div className="flex-1 min-w-0 space-y-4">
             {activeTab === "overview" && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div data-demo-allow className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { icon: Users, label: "Total Users", value: usersList.length, sub: null, iconBg: "bg-sky-100 dark:bg-sky-900/30", iconColor: "text-sky-600 dark:text-sky-400", tab: "users" },
                     { icon: Building2, label: "Total Properties", value: propertiesList.length, sub: pendingProperties.length > 0 ? `${pendingProperties.length} pending` : null, iconBg: "bg-emerald-100 dark:bg-emerald-900/30", iconColor: "text-emerald-600 dark:text-emerald-400", tab: "properties" },
@@ -1650,7 +1656,7 @@ const AdminDashboard = () => {
               <div>
                 <h2 className="text-base font-bold text-foreground mb-3">System Roles</h2>
                 <p className="text-xs text-muted-foreground mb-3">Click a role to view users with that role</p>
-                <div className="grid grid-cols-2 gap-3">
+                <div data-demo-allow className="grid grid-cols-2 gap-3">
                   {rolesList.map((r: { roleId: number; roleName: string }) => {
                     const count = usersList.filter((u) => u.role?.roleName === r.roleName).length;
                     return (
@@ -1675,10 +1681,10 @@ const AdminDashboard = () => {
                       <h2 className="text-xl font-bold text-foreground tracking-tight">Admin Profile</h2>
                       {(useRealApi || demoMode) && (
                         <TwoFactorBadge
-                          enabled={account2faEnabled}
+                          enabled={account2faForUi}
                           className="text-xs"
                           onEnableClick={
-                            account2faEnabled === false
+                            account2faForUi === false
                               ? demoMode
                                 ? () => setDemoLoginPromptOpen(true)
                                 : () => setAccount2faDialogOpen(true)
@@ -1714,7 +1720,7 @@ const AdminDashboard = () => {
                       <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <span className="w-1 h-4 rounded-full bg-sky-500/70" /> Security
                       </h3>
-                      <TwoFactorSettings initialEnabled={account2faEnabled} onEnabledChange={setAccount2faEnabled} hideEnableButton />
+                      <TwoFactorSettings initialEnabled={account2faForUi} onEnabledChange={setAccount2faEnabled} hideEnableButton />
                     </div>
                   </div>
                 </div>
@@ -2060,32 +2066,42 @@ const AdminDashboard = () => {
                 <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</p>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Select
-                      value={c.status}
-                      onValueChange={(v) => {
-                        const newStatus = v as ComplaintStatus;
-                        if (newStatus !== c.status) setStatusUpdateDialog({ open: true, complaintId: c.id, newStatus, currentStatus: c.status, message: "" });
-                      }}
+                    <ComplaintDetailStatusButtons
+                      currentStatus={c.status}
                       disabled={complaintStatusUpdating}
+                      onChange={(newStatus) => {
+                        if (newStatus !== c.status) {
+                          setStatusUpdateDialog({ open: true, complaintId: c.id, newStatus, currentStatus: c.status, message: "" });
+                        }
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-sky-500/50 text-sky-600 hover:bg-sky-50 dark:text-sky-400 dark:hover:bg-sky-900/20"
+                      onClick={() => {
+                        setAssignDialog({ open: true, complaintId: c.id, assignToUserId: 0 });
+                        setDetailItem(null);
+                      }}
                     >
-                        <SelectTrigger className="min-w-[152px] w-[152px] h-8 text-xs rounded-md border-violet-500/50 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20 focus:ring-violet-500/50 focus:ring-offset-0 pl-2.5">
-                          <span className="flex items-center gap-1.5">
-                            <Clock className="h-3.5 w-3.5 shrink-0" />
-                            <SelectValue placeholder="Status" />
-                          </span>
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="OPEN" className="text-rose-700 dark:text-rose-300 focus:bg-rose-50 focus:text-rose-800 dark:focus:bg-rose-900/30 dark:focus:text-rose-200">OPEN</SelectItem>
-                          <SelectItem value="IN_PROGRESS" className="text-amber-700 dark:text-amber-300 focus:bg-amber-50 focus:text-amber-800 dark:focus:bg-amber-900/30 dark:focus:text-amber-200">IN_PROGRESS</SelectItem>
-                          <SelectItem value="RESOLVED" className="text-emerald-700 dark:text-emerald-300 focus:bg-emerald-50 focus:text-emerald-800 dark:focus:bg-emerald-900/30 dark:focus:text-emerald-200">RESOLVED</SelectItem>
-                          <SelectItem value="CLOSED" className="text-slate-700 dark:text-slate-300 focus:bg-slate-100 focus:text-slate-800 dark:focus:bg-slate-800 dark:focus:text-slate-200">CLOSED</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button size="sm" variant="outline" className="h-8 text-xs border-sky-500/50 text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20" onClick={() => { setAssignDialog({ open: true, complaintId: c.id, assignToUserId: 0 }); setDetailItem(null); }}><UserPlus className="h-3.5 w-3.5 mr-1" /> Assign</Button>
-                      {!isResolved && (
-                        <Button size="sm" variant="outline" className="h-8 text-xs border-emerald-500/50 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" onClick={() => { setComplaintActionId(c.id); setDetailItem(null); }}><CheckCircle className="h-3.5 w-3.5 mr-1" /> Resolve</Button>
-                      )}
-                    </div>
+                      <UserPlus className="h-3.5 w-3.5 mr-1" />
+                      Assign
+                    </Button>
+                    {!isResolved && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs border-emerald-500/50 text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                        onClick={() => {
+                          setComplaintActionId(c.id);
+                          setDetailItem(null);
+                        }}
+                      >
+                        <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                        Resolve
+                      </Button>
+                    )}
+                  </div>
                     {complaintStatusUpdating && <p className="text-xs text-muted-foreground">Updating…</p>}
                   </div>
                 )}

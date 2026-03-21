@@ -116,6 +116,25 @@ public class ProfileServiceImpl implements ProfileService {
         if (request.getMobile() == null || request.getMobile().trim().isEmpty()) {
             throw new BadRequestException("Missing mandatory parameter: mobile");
         }
+        if (request.getState() == null || request.getState().trim().isEmpty()) {
+            throw new BadRequestException("Missing mandatory parameter: state");
+        }
+        if (request.getCity() == null || request.getCity().trim().isEmpty()) {
+            throw new BadRequestException("Missing mandatory parameter: city");
+        }
+        if (request.getDistrict() == null || request.getDistrict().trim().isEmpty()) {
+            throw new BadRequestException("Missing mandatory parameter: district");
+        }
+        if (request.getPinCode() == null || request.getPinCode().trim().isEmpty()) {
+            throw new BadRequestException("Missing mandatory parameter: pinCode");
+        }
+        String pc = request.getPinCode().trim();
+        if (!pc.matches("^[0-9]{6}$")) {
+            throw new BadRequestException("pinCode must be exactly 6 digits");
+        }
+        if (request.getAddress() == null || request.getAddress().trim().isEmpty()) {
+            throw new BadRequestException("Missing mandatory parameter: address (village / street / house)");
+        }
     }
 
     private void copyFromUser(User user, Profile profile) {
@@ -229,8 +248,12 @@ public class ProfileServiceImpl implements ProfileService {
         if (req.getIdNumber() != null) profile.setIdNumber(req.getIdNumber());
         if (req.getAddress() != null) profile.setAddress(req.getAddress());
         if (req.getCity() != null) profile.setCity(req.getCity());
+        if (req.getDistrict() != null) profile.setDistrict(req.getDistrict());
         if (req.getState() != null) profile.setState(req.getState());
         if (req.getPinCode() != null) profile.setPinCode(req.getPinCode());
+        if (req.getVillage() != null) profile.setVillage(req.getVillage());
+        if (req.getPostOffice() != null) profile.setPostOffice(req.getPostOffice());
+        if (req.getPoliceStation() != null) profile.setPoliceStation(req.getPoliceStation());
     }
 
     private ProfileDTO toDTO(Profile p) {
@@ -251,8 +274,12 @@ public class ProfileServiceImpl implements ProfileService {
         dto.setIdNumber(p.getIdNumber());
         dto.setAddress(p.getAddress());
         dto.setCity(p.getCity());
+        dto.setDistrict(p.getDistrict());
         dto.setState(p.getState());
         dto.setPinCode(p.getPinCode());
+        dto.setVillage(p.getVillage());
+        dto.setPostOffice(p.getPostOffice());
+        dto.setPoliceStation(p.getPoliceStation());
         dto.setStatus(p.getStatus());
         dto.setSubmittedAt(p.getSubmittedAt());
         dto.setReviewedAt(p.getReviewedAt());

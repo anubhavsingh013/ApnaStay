@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { LogIn } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { useDemoData } from "@/features/demo/DemoDataContext";
 
 interface DemoModeLoginPromptProps {
   open: boolean;
@@ -17,15 +18,20 @@ export function DemoModeLoginPrompt({
   message = "Please sign in to access the complete feature. Demo mode shows a preview only.",
 }: DemoModeLoginPromptProps) {
   const navigate = useNavigate();
+  const { demoMode, exitDemoAndSignIn } = useDemoData();
 
   const handleGoToLogin = () => {
     onOpenChange(false);
-    navigate("/login", { state: { from: window.location.pathname } });
+    if (demoMode) {
+      exitDemoAndSignIn(navigate);
+    } else {
+      navigate("/login", { state: { from: window.location.pathname } });
+    }
   };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md" aria-describedby={undefined}>
+      <DialogContent data-demo-allow className="sm:max-w-md" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <LogIn className="h-5 w-5 text-primary" />

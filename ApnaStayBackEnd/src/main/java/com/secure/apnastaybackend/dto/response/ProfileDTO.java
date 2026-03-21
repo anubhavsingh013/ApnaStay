@@ -31,8 +31,12 @@ public class ProfileDTO {
     private String idNumber;
     private String address;
     private String city;
+    private String district;
     private String state;
     private String pinCode;
+    private String village;
+    private String postOffice;
+    private String policeStation;
     private ProfileStatus status;
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime submittedAt;

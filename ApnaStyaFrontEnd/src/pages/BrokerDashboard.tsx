@@ -1,19 +1,24 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link, useNavigate, useLocation } from "react-router-dom";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
-import { useDemoData } from "@/features/demo/DemoDataContext";
+import { useDemoData, type BrokerProfile } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastSuccess, toastError } from "@/lib/app-toast";
-import { getProfile, get2faStatus, submitProfileForReview, getDecodedToken, type ProfileDTO } from "@/lib/api";
+import { getProfile, get2faStatus, submitProfileForReview, updateProfile, getDecodedToken, type ProfileDTO } from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
-import { MobileInput, parseMobileValue, formatMobileForApi } from "@/components/auth/MobileInput";
+import { parseMobileValue, formatMobileForApi } from "@/components/auth/MobileInput";
 import { indianStates, isPincodeValidForState } from "@/constants/indianStates";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { BrokerProfileMuiForm } from "@/components/profile/BrokerProfileMuiForm";
+import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
+import type { BrokerProfileFormFields } from "@/components/profile/BrokerProfileMuiForm";
+import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
 import {
   Building2, Users, Briefcase, User, Bell, Search, Eye, IndianRupee,
-  AlertCircle, Plus, Handshake, Phone, ChevronRight, Pencil, CheckCircle,
+  AlertCircle, Plus, Handshake, Phone, ChevronRight, Pencil, CheckCircle, FileText,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,10 +28,77 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
-import { DatePickerSelects } from "@/components/common/DatePickerSelects";
 import { formatDob } from "@/lib/utils";
+import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
 
 const DEMO_BROKER = "amit_broker";
+
+const brokerProfileMuiTheme = createTheme({
+  palette: { mode: "light", primary: { main: "#7c3aed" } },
+});
+
+const emptyBrokerProfileForm = (): BrokerProfileFormFields => ({
+  fullName: "",
+  gender: "Male",
+  dateOfBirth: "",
+  aadharNumber: "",
+  mobile: "",
+  firmName: "",
+  licenseNumber: "",
+  address: "",
+  city: "",
+  district: "",
+  state: "",
+  pinCode: "",
+});
+
+function buildBrokerFormFromDemo(demoBrokerProfile: BrokerProfile): BrokerProfileFormFields {
+  const { countryCode, mobile } = parseMobileValue(demoBrokerProfile.mobile || "");
+  const sc = indianStates.find((s) => s.name === demoBrokerProfile.state)?.code ?? "";
+  const legacyDemoAddr = [
+    (demoBrokerProfile as { village?: string }).village,
+    (demoBrokerProfile as { postOffice?: string }).postOffice,
+    (demoBrokerProfile as { policeStation?: string }).policeStation,
+  ]
+    .filter(Boolean)
+    .join(", ");
+  return {
+    fullName: demoBrokerProfile.name || "",
+    gender: "Male",
+    dateOfBirth: "",
+    aadharNumber: "",
+    mobile: mobile ? `${countryCode || "91"}|${mobile}` : "",
+    firmName: demoBrokerProfile.firmName || "",
+    licenseNumber: demoBrokerProfile.licenseNumber || "",
+    address: (demoBrokerProfile.address && demoBrokerProfile.address.trim()) || legacyDemoAddr || "",
+    city: demoBrokerProfile.city || "",
+    district: demoBrokerProfile.district || "",
+    state: sc,
+    pinCode: demoBrokerProfile.pincode || "",
+  };
+}
+
+function mapApiProfileToBrokerForm(d: ProfileDTO): BrokerProfileFormFields {
+  const sc = indianStates.find((s) => s.name === d.state)?.code ?? d.state;
+  const legacyAddr = [d.village, d.postOffice, d.policeStation].filter(Boolean).join(", ");
+  return {
+    fullName: d.fullName || "",
+    gender: d.gender || "Male",
+    dateOfBirth: d.dateOfBirth || "",
+    aadharNumber: d.aadharNumber || "",
+    mobile: (() => {
+      const { countryCode, mobile: m } = parseMobileValue(d.mobile || "");
+      return m ? `${countryCode}|${m}` : "";
+    })(),
+    firmName: d.firmName || "",
+    licenseNumber: d.licenseNumber || "",
+    address: (d.address && d.address.trim()) || legacyAddr || "",
+    city: d.city || "",
+    district: d.district || "",
+    state: sc,
+    pinCode: d.pinCode || "",
+  };
+}
 
 const tabs = [
   { label: "Overview", icon: Briefcase, id: "overview" },
@@ -71,11 +143,15 @@ const BrokerDashboard = () => {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [profileSubmitDialogOpen, setProfileSubmitDialogOpen] = useState(false);
   const [verifySubmitDialogOpen, setVerifySubmitDialogOpen] = useState(false);
-  const [profileSubmitForm, setProfileSubmitForm] = useState({
+  const [profileSubmitForm, setProfileSubmitForm] = useState<BrokerProfileFormFields>({
     fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", firmName: "", licenseNumber: "",
-    address: "", city: "", state: "", pinCode: "",
+    address: "", city: "", district: "", state: "", pinCode: "",
   });
+  const [profileUpdateDialogOpen, setProfileUpdateDialogOpen] = useState(false);
+  /** JSON snapshot when Update profile dialog opens — Save disabled until form differs. */
+  const profileBrokerUpdateInitialRef = useRef<string | null>(null);
   const [submittingProfile, setSubmittingProfile] = useState(false);
+  const [updatingProfile, setUpdatingProfile] = useState(false);
   const [profile2faEnabled, setProfile2faEnabled] = useState<boolean | null>(null);
   const [twoFactorDialogOpen, setTwoFactorDialogOpen] = useState(false);
 
@@ -103,13 +179,7 @@ const BrokerDashboard = () => {
         if (data && typeof data.id === "number") {
           setApiProfile(data);
           setApiApproved(data.status === "APPROVED");
-          const { countryCode, mobile } = parseMobileValue(data.mobile || "");
-          const mobileFormValue = mobile ? `${countryCode}|${mobile}` : "";
-          setProfileSubmitForm({
-            fullName: data.fullName || "", gender: data.gender || "Male", dateOfBirth: data.dateOfBirth || "",
-            aadharNumber: data.aadharNumber || "", mobile: mobileFormValue, firmName: data.firmName || "", licenseNumber: data.licenseNumber || "",
-            address: data.address || "", city: data.city || "", state: data.state || "", pinCode: data.pinCode || "",
-          });
+          setProfileSubmitForm(mapApiProfileToBrokerForm(data));
         } else {
           setApiProfile(null);
           setApiApproved(false);
@@ -209,74 +279,182 @@ const BrokerDashboard = () => {
   const demoBrokerProfile = brokerProfiles.find((p) => p.brokerUser === currentBroker);
 
   useEffect(() => {
-    if (profileSubmitDialogOpen && demoMode && demoBrokerProfile) {
-      const { countryCode, mobile } = parseMobileValue(demoBrokerProfile.mobile || "");
-      setProfileSubmitForm({
-        fullName: demoBrokerProfile.name || "",
-        gender: "Male",
-        dateOfBirth: "",
-        aadharNumber: "",
-        mobile: mobile ? `${countryCode || "91"}|${mobile}` : "",
-        firmName: demoBrokerProfile.firmName || "",
-        licenseNumber: demoBrokerProfile.licenseNumber || "",
-        address: demoBrokerProfile.address || "",
-        city: demoBrokerProfile.city || "",
-        state: demoBrokerProfile.state || "",
-        pinCode: demoBrokerProfile.pincode || "",
-      });
-    }
+    if (!profileSubmitDialogOpen || !demoMode || !demoBrokerProfile) return;
+    setProfileSubmitForm(buildBrokerFormFromDemo(demoBrokerProfile));
   }, [profileSubmitDialogOpen, demoMode, demoBrokerProfile]);
 
-  const handleSubmitProfileForReview = () => {
+  useEffect(() => {
+    if (!profileSubmitDialogOpen || demoMode || !apiProfile) return;
+    setProfileSubmitForm(mapApiProfileToBrokerForm(apiProfile));
+  }, [profileSubmitDialogOpen, demoMode, apiProfile]);
+
+  useEffect(() => {
+    if (!profileUpdateDialogOpen) {
+      profileBrokerUpdateInitialRef.current = null;
+      return;
+    }
+    if (demoMode && demoBrokerProfile) {
+      const newForm = buildBrokerFormFromDemo(demoBrokerProfile);
+      setProfileSubmitForm(newForm);
+      profileBrokerUpdateInitialRef.current = JSON.stringify(newForm);
+    } else if (!demoMode && apiProfile) {
+      const newForm = mapApiProfileToBrokerForm(apiProfile);
+      setProfileSubmitForm(newForm);
+      profileBrokerUpdateInitialRef.current = JSON.stringify(newForm);
+    } else {
+      const newForm = emptyBrokerProfileForm();
+      setProfileSubmitForm(newForm);
+      profileBrokerUpdateInitialRef.current = JSON.stringify(newForm);
+    }
+  }, [profileUpdateDialogOpen, demoMode, demoBrokerProfile, apiProfile]);
+
+  const isBrokerProfileUpdateFormValid = () => {
     const f = profileSubmitForm;
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || "").trim().replace(/\D/g, "");
-    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.firmName?.trim() || !f.licenseNumber?.trim() || !f.address?.trim() || !f.state?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toastError("Missing fields", "Fill all mandatory fields including mobile (10 digits), firm name and license number.");
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.firmName?.trim() || !f.licenseNumber?.trim()) return false;
+    if (!isProfileLocationComplete(f)) return false;
+    if (aadharVal.length !== 12) return false;
+    if (stateName && !isPincodeValidForState(f.pinCode, stateName)) return false;
+    return true;
+  };
+
+  const hasBrokerProfileUpdateFormChanged = () => {
+    if (!profileBrokerUpdateInitialRef.current) return false;
+    return JSON.stringify(profileSubmitForm) !== profileBrokerUpdateInitialRef.current;
+  };
+
+  const canSaveBrokerProfileUpdate =
+    profileUpdateDialogOpen && isBrokerProfileUpdateFormValid() && hasBrokerProfileUpdateFormChanged();
+
+  const buildBrokerProfilePayload = () => {
+    const f = profileSubmitForm;
+    const mobileStr = getMobileForApi();
+    const aadharVal = (f.aadharNumber || "").trim().replace(/\D/g, "");
+    const stateName = indianStates.find((s) => s.code === f.state)?.name ?? f.state;
+    return {
+      mobileStr,
+      aadharVal,
+      stateName,
+      body: {
+        role: "ROLE_BROKER" as const,
+        fullName: f.fullName.trim(),
+        gender: f.gender,
+        dateOfBirth: f.dateOfBirth,
+        aadharNumber: aadharVal || null,
+        mobile: mobileStr,
+        firmName: f.firmName.trim(),
+        licenseNumber: f.licenseNumber.trim(),
+        idType: null as string | null,
+        idNumber: null as string | null,
+        address: (f.address || "").trim(),
+        city: f.city.trim(),
+        district: f.district.trim(),
+        state: stateName.trim(),
+        pinCode: f.pinCode.trim(),
+        village: null,
+        postOffice: null,
+        policeStation: null,
+      },
+    };
+  };
+
+  const handleSaveBrokerProfileUpdate = () => {
+    if (!hasBrokerProfileUpdateFormChanged()) {
+      toastError("No changes", "Update at least one field before saving.");
+      return;
+    }
+    const { mobileStr, aadharVal, stateName, body } = buildBrokerProfilePayload();
+    if (!body.fullName || !body.dateOfBirth || !mobileStr || !body.firmName || !body.licenseNumber) {
+      toastError("Missing fields", "Fill all mandatory personal and firm fields.");
+      return;
+    }
+    if (!isProfileLocationComplete(profileSubmitForm)) {
+      toastError("Missing address", "State, city, district, pin code, and village/street/house are required.");
       return;
     }
     if (aadharVal.length !== 12) {
       toastError("Aadhar required", "Aadhar number must be 12 digits.");
       return;
     }
-    if (f.state && !isPincodeValidForState(f.pinCode.trim(), f.state)) {
+    if (stateName && !isPincodeValidForState(body.pinCode, stateName)) {
       toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
       submitBrokerProfile({
         brokerUser: currentBroker,
-        name: f.fullName.trim(),
+        name: body.fullName,
         email: demoBrokerProfile?.email ?? `${currentBroker.replace(/_broker$/, "")}@gmail.com`,
         mobile: mobileStr,
-        firmName: f.firmName.trim(),
-        licenseNumber: f.licenseNumber.trim(),
-        address: f.address.trim(),
-        city: f.city.trim(),
-        state: f.state.trim(),
-        pincode: f.pinCode.trim(),
+        firmName: body.firmName,
+        licenseNumber: body.licenseNumber,
+        address: body.address,
+        city: body.city,
+        state: body.state,
+        pincode: body.pinCode,
+        district: body.district,
+      });
+      toastSuccess("Profile updated", "Your broker profile has been saved.");
+      setProfileUpdateDialogOpen(false);
+      return;
+    }
+    setUpdatingProfile(true);
+    updateProfile({ ...body, role: "ROLE_BROKER" })
+      .then((res) => {
+        const data = (res as { data?: ProfileDTO }).data;
+        if (data) {
+          setApiProfile(data);
+          setApiApproved(data.status === "APPROVED");
+          setProfileSubmitForm(mapApiProfileToBrokerForm(data));
+        }
+        toastSuccess("Profile updated");
+        setProfileUpdateDialogOpen(false);
+        fetchProfileFromDb();
+      })
+      .catch((err) => toastError("Update failed", err?.message))
+      .finally(() => setUpdatingProfile(false));
+  };
+
+  const handleSubmitProfileForReview = () => {
+    const { mobileStr, aadharVal, stateName, body } = buildBrokerProfilePayload();
+    if (!body.fullName || !body.dateOfBirth || !mobileStr || !body.firmName || !body.licenseNumber) {
+      toastError("Missing fields", "Fill all mandatory fields including mobile, firm name and license number.");
+      return;
+    }
+    if (!isProfileLocationComplete(profileSubmitForm)) {
+      toastError("Missing address", "State, city, district, pin code, and village/street/house are required.");
+      return;
+    }
+    if (aadharVal.length !== 12) {
+      toastError("Aadhar required", "Aadhar number must be 12 digits.");
+      return;
+    }
+    if (stateName && !isPincodeValidForState(body.pinCode, stateName)) {
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
+      return;
+    }
+    if (demoMode) {
+      submitBrokerProfile({
+        brokerUser: currentBroker,
+        name: body.fullName,
+        email: demoBrokerProfile?.email ?? `${currentBroker.replace(/_broker$/, "")}@gmail.com`,
+        mobile: mobileStr,
+        firmName: body.firmName,
+        licenseNumber: body.licenseNumber,
+        address: body.address,
+        city: body.city,
+        state: body.state,
+        pincode: body.pinCode,
+        district: body.district,
       });
       toastSuccess("Profile submitted", "Your broker profile has been submitted for admin review.");
       setProfileSubmitDialogOpen(false);
       return;
     }
     setSubmittingProfile(true);
-    submitProfileForReview("ROLE_BROKER", {
-      role: "ROLE_BROKER",
-      fullName: f.fullName.trim(),
-      gender: f.gender,
-      dateOfBirth: f.dateOfBirth,
-      aadharNumber: aadharVal || null,
-      mobile: mobileStr,
-      firmName: f.firmName.trim(),
-      licenseNumber: f.licenseNumber.trim(),
-      idType: null,
-      idNumber: null,
-      address: f.address.trim(),
-      city: f.city.trim(),
-      state: f.state.trim(),
-      pinCode: f.pinCode.trim(),
-    })
+    submitProfileForReview("ROLE_BROKER", body)
       .then((res) => {
         const data = (res as { data?: ProfileDTO }).data;
         if (data) {
@@ -285,6 +463,7 @@ const BrokerDashboard = () => {
         }
         toastSuccess("Profile submitted", "Your broker profile has been submitted for admin review.");
         setProfileSubmitDialogOpen(false);
+        fetchProfileFromDb();
       })
       .catch((err) => toastError("Submission failed", err?.message))
       .finally(() => setSubmittingProfile(false));
@@ -548,7 +727,7 @@ const BrokerDashboard = () => {
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        onClick={() => setProfileSubmitDialogOpen(true)}
+                        onClick={() => setProfileUpdateDialogOpen(true)}
                         disabled={useRealApi && profileLoading}
                         className="inline-flex items-center gap-1.5 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 disabled:opacity-50 disabled:pointer-events-none px-4 py-1.5 text-xs font-medium transition-colors min-w-[140px] justify-center"
                       >
@@ -681,7 +860,7 @@ const BrokerDashboard = () => {
                               <div className="flex flex-wrap justify-center gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => setProfileSubmitDialogOpen(true)}
+                                  onClick={() => setProfileUpdateDialogOpen(true)}
                                   className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
@@ -718,66 +897,57 @@ const BrokerDashboard = () => {
         </div>
       </div>
 
-      {/* Broker profile submit for verification */}
-      <Dialog open={profileSubmitDialogOpen} onOpenChange={setProfileSubmitDialogOpen}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle>Submit broker profile for verification</DialogTitle></DialogHeader>
-          <p className="text-xs text-muted-foreground">Complete the form so admin can verify your broker profile. You can refer clients after approval.</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 py-2">
-            <div className="sm:col-span-2 space-y-1.5">
-              <Label>Full name <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.fullName} onChange={e => setProfileSubmitForm(f => ({ ...f, fullName: e.target.value }))} placeholder="Your full name" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Gender <span className="text-destructive">*</span></Label>
-              <Select value={profileSubmitForm.gender} onValueChange={v => setProfileSubmitForm(f => ({ ...f, gender: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent><SelectItem value="Male">Male</SelectItem><SelectItem value="Female">Female</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <DatePickerSelects label="Date of birth *" value={profileSubmitForm.dateOfBirth} onChange={v => setProfileSubmitForm(f => ({ ...f, dateOfBirth: v }))} maxDate={new Date()} />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Aadhar number <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.aadharNumber} onChange={e => setProfileSubmitForm(f => ({ ...f, aadharNumber: e.target.value.replace(/\D/g, "").slice(0, 12) }))} placeholder="12 digits" maxLength={12} />
-            </div>
-            <MobileInput value={profileSubmitForm.mobile} onChange={(v) => setProfileSubmitForm(f => ({ ...f, mobile: v }))} placeholder="9876543210" />
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>Firm name <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.firmName} onChange={e => setProfileSubmitForm(f => ({ ...f, firmName: e.target.value }))} placeholder="Your firm / company name" />
-            </div>
-            <div className="space-y-1.5 sm:col-span-2">
-              <Label>License number <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.licenseNumber} onChange={e => setProfileSubmitForm(f => ({ ...f, licenseNumber: e.target.value }))} placeholder="RERA / license number" />
-            </div>
-            <div className="sm:col-span-2 space-y-1.5">
-              <Label>Address <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.address} onChange={e => setProfileSubmitForm(f => ({ ...f, address: e.target.value }))} placeholder="Street address" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>State <span className="text-destructive">*</span></Label>
-              <Select value={profileSubmitForm.state} onValueChange={v => setProfileSubmitForm(f => ({ ...f, state: v, city: "", pinCode: "" }))}>
-                <SelectTrigger><SelectValue placeholder="Select state" /></SelectTrigger>
-                <SelectContent>{indianStates.map(s => <SelectItem key={s.code} value={s.name}>{s.name}</SelectItem>)}</SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label>City <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.city} onChange={e => setProfileSubmitForm(f => ({ ...f, city: e.target.value }))} placeholder="e.g. Bangalore" />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Pin code <span className="text-destructive">*</span></Label>
-              <Input value={profileSubmitForm.pinCode} onChange={e => setProfileSubmitForm(f => ({ ...f, pinCode: e.target.value.replace(/\D/g, "").slice(0, 6) }))} placeholder="560001" maxLength={6} className={profileSubmitForm.state && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.state) ? "border-destructive" : ""} />
-              {profileSubmitForm.state && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.state) && <p className="text-xs text-destructive">Pin code does not belong to selected state</p>}
-            </div>
+      <ProfileUpdateDialog
+        open={profileUpdateDialogOpen}
+        onOpenChange={(open) => {
+          setProfileUpdateDialogOpen(open);
+          if (!open) setProfileSubmitForm(emptyBrokerProfileForm());
+        }}
+        description="Update your broker details. Use verification when you want admin to review."
+        saveDisabled={!canSaveBrokerProfileUpdate}
+        saving={updatingProfile}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!canSaveBrokerProfileUpdate) return;
+          handleSaveBrokerProfileUpdate();
+        }}
+      >
+        <ThemeProvider theme={brokerProfileMuiTheme}>
+          <BrokerProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
+        </ThemeProvider>
+      </ProfileUpdateDialog>
+
+      {/* Submit broker profile for verification */}
+      <Dialog open={profileSubmitDialogOpen} onOpenChange={(open) => { setProfileSubmitDialogOpen(open); if (!open) setProfileSubmitForm(emptyBrokerProfileForm()); }}>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Submit broker profile for verification</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Complete the form so admin can verify your broker profile.</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmitProfileForReview} disabled={submittingProfile}>
-              {submittingProfile ? "Submitting..." : "Submit for review"}
-            </Button>
-          </DialogFooter>
+          <form
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            onSubmit={(e) => { e.preventDefault(); handleSubmitProfileForReview(); }}
+          >
+            <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+              <ThemeProvider theme={brokerProfileMuiTheme}>
+                <BrokerProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
+              </ThemeProvider>
+            </div>
+            <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+              <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
+                <Button type="submit" className="min-h-10 w-full sm:w-auto" disabled={submittingProfile}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  {submittingProfile ? "Submitting..." : "Submit for review"}
+                </Button>
+              </DialogFooter>
+            </div>
+          </form>
         </DialogContent>
       </Dialog>
 
