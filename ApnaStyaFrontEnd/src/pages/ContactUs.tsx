@@ -7,17 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Mail, Phone, MapPin, Send, Clock, ArrowRight, CheckCircle2, User, MessageSquare } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess } from "@/lib/app-toast";
 import ApnaStayLogo from "@/components/common/ApnaStayLogo";
 
 const ContactUs = () => {
-  const { toast } = useToast();
   const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
   const [submitted, setSubmitted] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    toast({ title: "Message Sent!", description: "We'll get back to you within 24 hours." });
+    toastSuccess("Message Sent!", "We'll get back to you within 24 hours.");
     setForm({ name: "", email: "", subject: "", message: "" });
     setSubmitted(true);
     setTimeout(() => setSubmitted(false), 4000);

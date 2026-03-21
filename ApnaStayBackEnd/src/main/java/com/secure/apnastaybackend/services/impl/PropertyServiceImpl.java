@@ -5,22 +5,30 @@ import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
 import com.secure.apnastaybackend.entity.AppRole;
 import com.secure.apnastaybackend.entity.Property;
+import com.secure.apnastaybackend.entity.PropertyImageFile;
 import com.secure.apnastaybackend.entity.PropertyStatus;
 import com.secure.apnastaybackend.entity.User;
 import com.secure.apnastaybackend.exceptions.BadRequestException;
 import com.secure.apnastaybackend.exceptions.ProfileNotApprovedException;
 import com.secure.apnastaybackend.exceptions.ResourceNotFoundException;
 import com.secure.apnastaybackend.exceptions.UnauthorizedException;
+import com.secure.apnastaybackend.repositories.PropertyImageFileRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
 import com.secure.apnastaybackend.services.ProfileService;
+import com.secure.apnastaybackend.services.PropertyImageUploadValidator;
 import com.secure.apnastaybackend.services.PropertyService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Service
@@ -29,12 +37,21 @@ public class PropertyServiceImpl implements PropertyService {
     
     @Autowired
     private PropertyRepository propertyRepository;
+
+    @Autowired
+    private PropertyImageFileRepository propertyImageFileRepository;
     
     @Autowired
     private UserRepository userRepository;
 
     @Autowired
     private ProfileService profileService;
+
+    @Autowired
+    private PropertyImageUploadValidator propertyImageUploadValidator;
+
+    @Value("${app.public-base-url:}")
+    private String publicBaseUrl;
 
     @Override
     @Transactional
@@ -58,6 +75,56 @@ public class PropertyServiceImpl implements PropertyService {
         log.info("Property created successfully with ID: {} for user: {}", savedProperty.getId(), userName);
         
         return convertToDTO(savedProperty);
+    }
+
+    @Override
+    @Transactional
+    public PropertyDTO createPropertyWithUploadedImages(String userName, PropertyRequest request, List<MultipartFile> imageFiles) {
+        log.info("Creating property with uploaded images for user: {}", userName);
+
+        if (userName == null || userName.trim().isEmpty()) {
+            throw new BadRequestException("Username cannot be empty");
+        }
+
+        if (!profileService.isProfileApproved(userName, AppRole.ROLE_OWNER) && !isAdmin(userName)) {
+            throw new ProfileNotApprovedException("Your owner profile must be approved before you can add properties. Please submit your profile and wait for admin approval.");
+        }
+
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+
+        Property property = getProperty(userName, request, user);
+        attachUploadedImages(property, imageFiles);
+
+        Property savedProperty = propertyRepository.save(property);
+        log.info("Property created with {} stored image(s), id: {}", imageFiles != null ? imageFiles.size() : 0, savedProperty.getId());
+        return convertToDTO(savedProperty);
+    }
+
+    private void attachUploadedImages(Property property, List<MultipartFile> imageFiles) {
+        if (imageFiles == null || imageFiles.isEmpty()) {
+            return;
+        }
+        propertyImageUploadValidator.validateFileCount(imageFiles.size());
+        int order = 0;
+        for (MultipartFile file : imageFiles) {
+            if (file == null || file.isEmpty()) {
+                continue;
+            }
+            propertyImageUploadValidator.validateFile(file);
+            try {
+                byte[] bytes = file.getBytes();
+                PropertyImageFile img = new PropertyImageFile();
+                img.setProperty(property);
+                img.setData(bytes);
+                img.setContentType(resolveStoredContentType(file.getContentType(), bytes));
+                img.setSortOrder(order++);
+                property.getImageFiles().add(img);
+            } catch (IOException e) {
+                log.error("Failed to read image bytes", e);
+                throw new BadRequestException("Could not read an uploaded image.");
+            }
+        }
     }
 
     private static Property getProperty(String userName, PropertyRequest request, User user) {
@@ -134,6 +201,77 @@ public class PropertyServiceImpl implements PropertyService {
         
         log.info("Property ID: {} updated successfully for user: {}", propertyId, userName);
         return convertToDTO(updatedProperty);
+    }
+
+    @Override
+    @Transactional
+    public PropertyDTO updatePropertyWithUploadedImages(Long propertyId, PropertyRequest request, String userName, List<MultipartFile> imageFiles) {
+        log.info("Updating property ID: {} with imageFiles part present: {}", propertyId, imageFiles != null);
+
+        if (propertyId == null || propertyId <= 0) {
+            throw new BadRequestException("Invalid property ID");
+        }
+
+        Property property = propertyRepository.findById(propertyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Property", "id", propertyId));
+
+        boolean isAdminUser = isAdmin(userName);
+        boolean isPropertyOwner = property.getOwnerUserName().equals(userName);
+
+        if (!isPropertyOwner && !isAdminUser) {
+            log.warn("User {} attempted to update property {} owned by {}",
+                    userName, propertyId, property.getOwnerUserName());
+            throw new UnauthorizedException("You are not authorized to update this property");
+        }
+
+        property.setTitle(request.getTitle());
+        property.setDescription(request.getDescription());
+        property.setPropertyType(request.getPropertyType());
+        property.setPrice(request.getPrice());
+        property.setBedrooms(request.getBedrooms());
+        property.setBathrooms(request.getBathrooms());
+        property.setArea(request.getArea());
+        if (request.getRating() != null) property.setRating(request.getRating());
+        if (request.getReviewCount() != null) property.setReviewCount(request.getReviewCount());
+        property.setFurnishing(request.getFurnishing());
+        if (request.getAmenities() != null) property.setAmenities(request.getAmenities());
+        if (request.getIsFeatured() != null) property.setIsFeatured(request.getIsFeatured());
+        property.setTenantUserName(request.getTenantUserName());
+        property.setLatitude(request.getLatitude());
+        property.setLongitude(request.getLongitude());
+        property.setAddress(request.getAddress());
+        property.setCity(request.getCity());
+        property.setState(request.getState());
+        property.setPinCode(request.getPinCode());
+        if (request.getImages() != null) property.setImages(request.getImages());
+
+        if (imageFiles != null) {
+            property.getImageFiles().clear();
+            attachUploadedImages(property, imageFiles);
+        }
+
+        Property updatedProperty = propertyRepository.save(property);
+        log.info("Property ID: {} updated successfully for user: {}", propertyId, userName);
+        return convertToDTO(updatedProperty);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PropertyImageFile getImageFileForDownload(Long imageFileId, String authenticatedUsernameOrNull) {
+        PropertyImageFile file = propertyImageFileRepository.findByIdWithProperty(imageFileId)
+                .orElseThrow(() -> new ResourceNotFoundException("PropertyImageFile", "id", imageFileId));
+
+        Property p = file.getProperty();
+        if (p.getStatus() == PropertyStatus.AVAILABLE) {
+            return file;
+        }
+        if (authenticatedUsernameOrNull != null && isAdmin(authenticatedUsernameOrNull)) {
+            return file;
+        }
+        if (authenticatedUsernameOrNull != null && p.getOwnerUserName().equals(authenticatedUsernameOrNull)) {
+            return file;
+        }
+        throw new UnauthorizedException("You are not authorized to view this image");
     }
 
     boolean isAdmin(String userName){
@@ -290,7 +428,7 @@ public class PropertyServiceImpl implements PropertyService {
         dto.setCity(property.getCity());
         dto.setState(property.getState());
         dto.setPinCode(property.getPinCode());
-        dto.setImages(property.getImages());
+        dto.setImages(buildMergedImageUrls(property));
         dto.setOwnerUserName(property.getOwnerUserName());
         dto.setStatus(property.getStatus());
         dto.setCreatedAt(property.getCreatedAt());
@@ -314,8 +452,51 @@ public class PropertyServiceImpl implements PropertyService {
         dto.setIsFeatured(property.getIsFeatured() != null ? property.getIsFeatured() : false);
         dto.setCity(property.getCity());
         dto.setState(property.getState());
-        dto.setImages(property.getImages() != null ? property.getImages() : java.util.Collections.emptyList());
+        dto.setImages(buildMergedImageUrls(property));
         return dto;
+    }
+
+    private List<String> buildMergedImageUrls(Property property) {
+        List<String> out = new ArrayList<>();
+        if (property.getImages() != null) {
+            for (String u : property.getImages()) {
+                if (u != null && !u.trim().isEmpty()) {
+                    out.add(u.trim());
+                }
+            }
+        }
+        if (property.getImageFiles() != null) {
+            for (PropertyImageFile f : property.getImageFiles()) {
+                out.add(buildPublicImageFileUrl(f.getId()));
+            }
+        }
+        return out;
+    }
+
+    private String buildPublicImageFileUrl(Long fileId) {
+        String path = "/api/property/image-file/" + fileId;
+        if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
+            return path;
+        }
+        String base = publicBaseUrl.endsWith("/")
+                ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1)
+                : publicBaseUrl;
+        return base + path;
+    }
+
+    /** Align with {@link com.secure.apnastaybackend.services.PropertyImageUploadValidator} after bytes are known. */
+    private static String resolveStoredContentType(String raw, byte[] b) {
+        String d = raw != null ? raw.toLowerCase(Locale.ROOT).trim() : "";
+        if ("image/jpg".equals(d)) d = "image/jpeg";
+        if (!d.isBlank() && !"application/octet-stream".equals(d)) {
+            return d;
+        }
+        if (b.length >= 2 && (b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8) return "image/jpeg";
+        if (b.length >= 8 && b[0] == (byte) 0x89 && b[1] == 0x50 && b[2] == 0x4E && b[3] == 0x47) return "image/png";
+        if (b.length >= 6 && b[0] == 'G' && b[1] == 'I' && b[2] == 'F') return "image/gif";
+        if (b.length >= 12 && b[0] == 'R' && b[1] == 'I' && b[2] == 'F' && b[3] == 'F'
+                && b[8] == 'W' && b[9] == 'E' && b[10] == 'B' && b[11] == 'P') return "image/webp";
+        return "application/octet-stream";
     }
 }
 

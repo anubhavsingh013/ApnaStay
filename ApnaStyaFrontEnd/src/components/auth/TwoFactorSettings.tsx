@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { get2faStatus, enable2fa, verify2fa, disable2fa } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 
 export interface TwoFactorSettingsProps {
   /** Called when 2FA is enabled or disabled so parent can update badge */
@@ -53,7 +53,6 @@ function normalizeOtpauthUrl(url: string): string {
 }
 
 export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableButton = false, autoStartEnableFlow = false, onCancel }: TwoFactorSettingsProps = {}) {
-  const { toast } = useToast();
   const [loading, setLoading] = useState(initialEnabled === undefined);
   const [enabled, setEnabled] = useState(initialEnabled ?? false);
   const [enableStep, setEnableStep] = useState<"idle" | "qr" | "verify">("idle");
@@ -73,7 +72,7 @@ export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableB
       if (!res.is2faEnabled) setEnableStep("idle");
       onEnabledChange?.(res.is2faEnabled);
     } catch {
-      toast({ title: "Failed to load 2FA status", variant: "destructive" });
+      toastError("Failed to load 2FA status");
     } finally {
       setLoading(false);
     }
@@ -125,27 +124,27 @@ export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableB
       url = url.trim().replace(/^["']|["']$/g, "");
       setOtpauthUrl(url);
     } catch (err) {
-      toast({ title: "Failed to enable 2FA", description: (err as Error)?.message, variant: "destructive" });
+      toastError("Failed to enable 2FA", (err as Error)?.message);
       setEnableStep("idle");
     }
   };
 
   const handleVerifyEnable = async () => {
     if (!/^\d{6}$/.test(verifyCode)) {
-      toast({ title: "Enter a 6-digit code", variant: "destructive" });
+      toastError("Enter a 6-digit code");
       return;
     }
     setVerifySubmitting(true);
     try {
       await verify2fa(verifyCode);
-      toast({ title: "2FA enabled", description: "Two-factor authentication is now on." });
+      toastSuccess("2FA enabled", "Two-factor authentication is now on.");
       setEnabled(true);
       setEnableStep("idle");
       setOtpauthUrl("");
       setVerifyCode("");
       onEnabledChange?.(true);
     } catch (err) {
-      toast({ title: "Invalid code", description: (err as Error)?.message, variant: "destructive" });
+      toastError("Invalid code", (err as Error)?.message);
     } finally {
       setVerifySubmitting(false);
     }
@@ -155,12 +154,12 @@ export function TwoFactorSettings({ onEnabledChange, initialEnabled, hideEnableB
     setDisableSubmitting(true);
     try {
       await disable2fa();
-      toast({ title: "2FA disabled" });
+      toastSuccess("2FA disabled");
       setEnabled(false);
       setDisableDialogOpen(false);
       onEnabledChange?.(false);
     } catch (err) {
-      toast({ title: "Failed to disable 2FA", description: (err as Error)?.message, variant: "destructive" });
+      toastError("Failed to disable 2FA", (err as Error)?.message);
     } finally {
       setDisableSubmitting(false);
     }

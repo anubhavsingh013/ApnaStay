@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Mail, Lock, Phone, Eye, EyeOff, ArrowLeft, Sparkles, ShieldCheck } from "lucide-react";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { signin, verify2faLogin, get2faStatus, setStoredUser, sendPhoneCode, phoneVerifyAndLogin, setJwt } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import ApnaStayLogo from "@/components/common/ApnaStayLogo";
 
@@ -17,7 +17,6 @@ type PhoneStep = "enter" | "otp";
 const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { toast } = useToast();
   const { setUser } = useAuth();
   const from = (location.state as { from?: string; message?: string })?.from;
   const message = (location.state as { from?: string; message?: string })?.message;
@@ -75,11 +74,10 @@ const Login = () => {
     } catch (err: any) {
       const msg = err?.message || "Sign in failed";
       const isLocked = /locked/i.test(msg);
-      toast({
-        title: isLocked ? "Account locked" : "Sign in failed",
-        description: isLocked ? "Contact support to unlock your account." : msg,
-        variant: "destructive",
-      });
+      toastError(
+        isLocked ? "Account locked" : "Sign in failed",
+        isLocked ? "Contact support to unlock your account." : msg,
+      );
     } finally {
       setLoading(false);
     }
@@ -94,11 +92,7 @@ const Login = () => {
       setLoading(false);
       redirectAfterLogin(res.roles);
     } catch (err: any) {
-      toast({
-        title: "Verification failed",
-        description: err?.message || "Invalid 2FA code. Please try again.",
-        variant: "destructive",
-      });
+      toastError("Verification failed", err?.message || "Invalid 2FA code. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -110,9 +104,9 @@ const Login = () => {
     try {
       await sendPhoneCode({ phoneNumber });
       setPhoneStep("otp");
-      toast({ title: "OTP Sent", description: `Verification code sent to ${phoneNumber}` });
+      toastSuccess("OTP Sent", `Verification code sent to ${phoneNumber}`);
     } catch (err: any) {
-      toast({ title: "Failed to send OTP", description: err.message, variant: "destructive" });
+      toastError("Failed to send OTP", err.message);
     } finally {
       setLoading(false);
     }
@@ -128,11 +122,10 @@ const Login = () => {
     } catch (err: any) {
       const msg = err?.message || "Verification failed";
       const isLocked = /locked/i.test(msg);
-      toast({
-        title: isLocked ? "Account locked" : "Verification failed",
-        description: isLocked ? "Contact support to unlock your account." : msg,
-        variant: "destructive",
-      });
+      toastError(
+        isLocked ? "Account locked" : "Verification failed",
+        isLocked ? "Contact support to unlock your account." : msg,
+      );
     } finally {
       setLoading(false);
     }

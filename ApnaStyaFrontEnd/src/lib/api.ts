@@ -596,6 +596,90 @@ export async function updateProperty(id: number, data: PropertyRequest) {
   });
 }
 
+/** Max constraints — must match backend {@code PropertyImageUploadValidator}. */
+export const PROPERTY_IMAGE_UPLOAD_MAX_FILES = 20;
+export const PROPERTY_IMAGE_UPLOAD_MAX_BYTES = 7 * 1024 * 1024;
+
+/** Strip server-generated DB image URLs before sending {@link PropertyRequest}; those rows are managed by multipart uploads. */
+export function filterExternalPropertyImageUrlsOnly(urls: string[] | undefined): string[] {
+  if (!Array.isArray(urls)) return [];
+  return urls.filter((u) => {
+    const s = (u ?? "").trim();
+    if (!s) return false;
+    if (s.includes("/api/property/image-file/")) return false;
+    return true;
+  });
+}
+
+/** Resolve relative API image paths for use in {@code <img src>}. */
+export function resolvePropertyImageUrl(url: string | null | undefined): string {
+  if (url == null || typeof url !== "string") return "";
+  const u = url.trim();
+  if (!u) return "";
+  if (u.startsWith("http://") || u.startsWith("https://") || u.startsWith("data:") || u.startsWith("blob:")) return u;
+  const base = BASE_URL.replace(/\/$/, "");
+  if (u.startsWith("/")) return `${base}${u}`;
+  return `${base}/${u.replace(/^\//, "")}`;
+}
+
+async function apiRequestFormData<T>(
+  path: string,
+  options: { method: string; body: FormData; auth?: boolean; csrf?: boolean }
+): Promise<T> {
+  const { method, body, auth = true, csrf = true } = options;
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (auth) {
+    const jwt = getJwt();
+    if (jwt) headers.Authorization = `Bearer ${jwt}`;
+  }
+  if (csrf) {
+    const token = await getCsrf();
+    if (token) headers[csrfHeaderName] = token;
+  }
+  const res = await fetch(`${BASE_URL}${path}`, { method, headers, body, credentials: "include" });
+  const text = await res.text();
+  const data = (text && text.trim().length > 0
+    ? (() => {
+        try {
+          return JSON.parse(text) as BackendErrorResponse & T;
+        } catch {
+          return {} as BackendErrorResponse & T;
+        }
+      })()
+    : {}) as BackendErrorResponse & T;
+  if (!res.ok) {
+    if (res.status === 401 && auth && getJwt() && method !== "GET") {
+      logout();
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("apnastay:auth:401"));
+    }
+    const userMessage = getApiErrorMessage(data as BackendErrorResponse, `Request failed (${res.status})`);
+    throw new Error(userMessage);
+  }
+  return data as T;
+}
+
+/**
+ * POST multipart {@code /api/property} — part {@code property}: JSON; part {@code imageFiles}: files (optional).
+ * Replaces binary images only on create (none yet). See also {@link updatePropertyWithImages}.
+ */
+export async function createPropertyWithImages(data: PropertyRequest, imageFiles: File[]) {
+  const fd = new FormData();
+  fd.append("property", new Blob([JSON.stringify(data)], { type: "application/json" }));
+  for (const f of imageFiles) fd.append("imageFiles", f, f.name);
+  return apiRequestFormData<{ success: boolean; data: PropertyDTO }>("/api/property", { method: "POST", body: fd });
+}
+
+/**
+ * PUT multipart — part {@code property}: JSON; part {@code imageFiles}: if present, **replaces** all DB-stored images
+ * (empty list clears them). Omit {@code imageFiles} part entirely to leave uploaded images unchanged (use JSON {@link updateProperty}).
+ */
+export async function updatePropertyWithImages(id: number, data: PropertyRequest, imageFiles: File[]) {
+  const fd = new FormData();
+  fd.append("property", new Blob([JSON.stringify(data)], { type: "application/json" }));
+  for (const f of imageFiles) fd.append("imageFiles", f, f.name);
+  return apiRequestFormData<{ success: boolean; data: PropertyDTO }>(`/api/property/${id}`, { method: "PUT", body: fd });
+}
+
 export async function deleteProperty(id: number) {
   return apiRequest<{ success: boolean; message: string }>(`/api/property/${id}`, {
     method: "DELETE",

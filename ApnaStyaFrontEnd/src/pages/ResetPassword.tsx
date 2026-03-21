@@ -5,13 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Lock, Eye, EyeOff, CheckCircle } from "lucide-react";
 import { resetPassword } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import ApnaStayLogo from "@/components/common/ApnaStayLogo";
 
 const ResetPassword = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { toast } = useToast();
   const token = searchParams.get("token") ?? "";
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -22,9 +21,9 @@ const ResetPassword = () => {
 
   useEffect(() => {
     if (!token) {
-      toast({ title: "Invalid link", description: "This reset link is invalid or expired.", variant: "destructive" });
+      toastError("Invalid link", "This reset link is invalid or expired.");
     }
-  }, [token, toast]);
+  }, [token]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,17 +33,10 @@ const ResetPassword = () => {
       // Backend may expect either the token from query or the full reset link URL; pass token (from ?token=...)
       await resetPassword(token, password);
       setSuccess(true);
-      toast({
-        title: "Password reset successfully",
-        description: "You can now sign in with your new password.",
-      });
+      toastSuccess("Password reset successfully", "You can now sign in with your new password.");
       setTimeout(() => navigate("/login", { replace: true }), 2000);
     } catch (err: any) {
-      toast({
-        title: "Reset failed",
-        description: err?.message || "Could not reset password. The link may have expired.",
-        variant: "destructive",
-      });
+      toastError("Reset failed", err?.message || "Could not reset password. The link may have expired.");
     } finally {
       setLoading(false);
     }

@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import { getProfile, get2faStatus, submitProfileForReview, getDecodedToken, type ProfileDTO } from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
@@ -52,7 +52,6 @@ const BrokerDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, dashboardPath } = useAuth();
-  const { toast } = useToast();
   const { demoMode, properties, bookings, requestBooking, notifications, markNotificationRead, getNotificationsFor, isBrokerProfileApproved, brokerProfiles, submitBrokerProfile } = useDemoData();
   const [activeTab, setActiveTab] = useState("overview");
   const [searchQuery, setSearchQuery] = useState("");
@@ -125,7 +124,7 @@ const BrokerDashboard = () => {
           setProfileError(null);
         } else {
           setProfileError("Could not load profile");
-          toast({ title: "Profile load failed", description: "Please try again later.", variant: "destructive" });
+          toastError("Profile load failed", "Please try again later.");
         }
       })
       .finally(() => setProfileLoading(false));
@@ -173,7 +172,7 @@ const BrokerDashboard = () => {
 
   const handleReferClient = () => {
     if (!brokerProfileApproved) {
-      toast({ title: "Profile approval required", description: "Get your broker profile approved to refer clients.", variant: "destructive" });
+      toastError("Profile approval required", "Get your broker profile approved to refer clients.");
       return;
     }
     if (!referPropId || !referClientId) return;
@@ -181,7 +180,7 @@ const BrokerDashboard = () => {
     const client = displayClients.find(c => c.id === referClientId);
     if (!prop || !client) return;
     requestBooking({ propertyId: prop.id, propertyTitle: prop.title, tenantName: client.email.split("@")[0] + "_tenant", ownerName: prop.ownerUserName, brokerName: currentBroker, visitDate: new Date(Date.now() + 3 * 86400000).toISOString(), type: "VISIT" });
-    toast({ title: "Visit scheduled", description: `${client.name} referred to ${prop.title}` });
+    toastSuccess("Visit scheduled", `${client.name} referred to ${prop.title}`);
     setReferDialog(false); setReferPropId(null); setReferClientId(null);
   };
 
@@ -189,16 +188,16 @@ const BrokerDashboard = () => {
     if (!clientForm.name) return;
     if (!demoMode) return;
     setClients(prev => [...prev, { ...clientForm, id: Date.now(), status: "SEARCHING" as const }]);
-    toast({ title: "Client added" }); setClientDialog(false);
+    toastSuccess("Client added"); setClientDialog(false);
     setClientForm({ name: "", phone: "", email: "", lookingFor: "", budget: "" });
   };
 
   const handleUpdateProfile = () => {
     if (!profileForm.email?.trim()) {
-      toast({ title: "Email required", variant: "destructive" });
+      toastError("Email required");
       return;
     }
-    toast({ title: "Profile updated", description: "Your changes have been saved." });
+    toastSuccess("Profile updated", "Your changes have been saved.");
     setProfileDialogOpen(false);
   };
 
@@ -233,15 +232,15 @@ const BrokerDashboard = () => {
     const mobileStr = getMobileForApi();
     const aadharVal = (f.aadharNumber || "").trim().replace(/\D/g, "");
     if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.firmName?.trim() || !f.licenseNumber?.trim() || !f.address?.trim() || !f.state?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toast({ title: "Missing fields", description: "Fill all mandatory fields including mobile (10 digits), firm name and license number.", variant: "destructive" });
+      toastError("Missing fields", "Fill all mandatory fields including mobile (10 digits), firm name and license number.");
       return;
     }
     if (aadharVal.length !== 12) {
-      toast({ title: "Aadhar required", description: "Aadhar number must be 12 digits.", variant: "destructive" });
+      toastError("Aadhar required", "Aadhar number must be 12 digits.");
       return;
     }
     if (f.state && !isPincodeValidForState(f.pinCode.trim(), f.state)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
@@ -257,7 +256,7 @@ const BrokerDashboard = () => {
         state: f.state.trim(),
         pincode: f.pinCode.trim(),
       });
-      toast({ title: "Profile submitted", description: "Your broker profile has been submitted for admin review." });
+      toastSuccess("Profile submitted", "Your broker profile has been submitted for admin review.");
       setProfileSubmitDialogOpen(false);
       return;
     }
@@ -284,10 +283,10 @@ const BrokerDashboard = () => {
           setApiProfile(data);
           setApiApproved(data.status === "APPROVED");
         }
-        toast({ title: "Profile submitted", description: "Your broker profile has been submitted for admin review." });
+        toastSuccess("Profile submitted", "Your broker profile has been submitted for admin review.");
         setProfileSubmitDialogOpen(false);
       })
-      .catch((err) => toast({ title: "Submission failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Submission failed", err?.message))
       .finally(() => setSubmittingProfile(false));
   };
 

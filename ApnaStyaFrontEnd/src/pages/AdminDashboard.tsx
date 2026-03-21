@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher, { setDemoUser } from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData, type AdminProfileItem, type OwnerProfile, type BrokerProfile, type TenantProfile } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import {
   adminGetUsers,
   adminGetRoles,
@@ -18,7 +18,10 @@ import {
   getProperties,
   getPropertiesAdminAll,
   createProperty,
+  createPropertyWithImages,
   updateProperty,
+  updatePropertyWithImages,
+  filterExternalPropertyImageUrlsOnly,
   deleteProperty as apiDeleteProperty,
   adminApproveProperty as apiApproveProperty,
   adminRejectProperty as apiRejectProperty,
@@ -44,11 +47,15 @@ import {
   type ComplaintMessageDTO,
   getDecodedToken,
 } from "@/lib/api";
+import { EMPTY_PROPERTY_FORM, DESCRIPTION_MAX_LENGTH } from "@/utils/propertyConstants";
+import { PropertyFormMuiFields } from "@/components/dashboard/PropertyFormMuiFields";
+import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import {
   Users, ShieldCheck, Building2, Lock, Unlock, Ban, CheckCircle,
   Key, Trash2, Eye, Search, AlertCircle, Clock, FileText, UserPlus,
   IndianRupee, Bell, ChevronRight, User, MapPin, Phone, Mail, Calendar,
-  CalendarClock, CalendarX2, Plus, Pencil, Check, X, XCircle,
+  CalendarClock, CalendarX2, Plus, Pencil, X, XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,7 +67,7 @@ import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
 import { DemoModeLoginPrompt } from "@/features/demo/DemoModeLoginPrompt";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { indianStates, statePincodeRanges } from "@/constants/indianStates";
+import { indianStates, isPincodeValidForState } from "@/constants/indianStates";
 import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 
 const tabs = [
@@ -74,6 +81,8 @@ const tabs = [
   { label: "Alerts", icon: Bell, id: "notifications" },
   { label: "Roles", icon: ShieldCheck, id: "roles" },
 ];
+
+const adminMuiTheme = createTheme({ palette: { mode: "light", primary: { main: "#0284c7" } } });
 
 const formatDob = (dob: string) => {
   if (!dob) return "—";
@@ -124,7 +133,6 @@ const AdminDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, isAdmin } = useAuth();
-  const { toast } = useToast();
   const {
     demoMode,
     properties, addProperty: demoAddProperty, updateProperty: demoUpdateProperty, approveProperty, rejectProperty, deleteProperty,
@@ -198,28 +206,8 @@ const AdminDashboard = () => {
   const [propertyDialogOpen, setPropertyDialogOpen] = useState<"add" | "edit" | null>(null);
   const [editingProperty, setEditingProperty] = useState<PropertyDTO | null>(null);
   const [propertySubmitting, setPropertySubmitting] = useState(false);
-  const [propertyForm, setPropertyForm] = useState<PropertyRequest>({
-    title: "",
-    description: "",
-    propertyType: "APARTMENT",
-    price: 0,
-    bedrooms: null,
-    bathrooms: null,
-    area: null,
-    rating: null,
-    reviewCount: null,
-    furnishing: null,
-    amenities: [],
-    isFeatured: false,
-    tenantUserName: null,
-    latitude: null,
-    longitude: null,
-    address: "",
-    city: "",
-    state: "",
-    pinCode: "",
-    images: [],
-  });
+  const [propertyForm, setPropertyForm] = useState<PropertyRequest>({ ...EMPTY_PROPERTY_FORM });
+  const [propertyImageFiles, setPropertyImageFiles] = useState<File[]>([]);
 
   const displayName = demoMode ? "admin_user" : (user?.username ?? "Admin");
   const decodedToken = getDecodedToken();
@@ -236,9 +224,9 @@ const AdminDashboard = () => {
         setApiUsers(list);
         setApiRoles((rolesRes as { data: { roleId: number; roleName: string }[] }).data ?? []);
       })
-      .catch((err) => toast({ title: "Could not load users", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Could not load users", err?.message))
       .finally(() => setUsersLoading(false));
-  }, [user, isAdmin, demoMode, toast]);
+  }, [user, isAdmin, demoMode]);
 
   useEffect(() => {
     if (user === null) return;
@@ -254,7 +242,7 @@ const AdminDashboard = () => {
     setPropertiesLoading(true);
     getPropertiesAdminAll()
       .then((res) => setApiProperties((res as { data: PropertyDTO[] }).data ?? []))
-      .catch((err) => toast({ title: "Could not load properties", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Could not load properties", err?.message))
       .finally(() => setPropertiesLoading(false));
   };
 
@@ -267,9 +255,9 @@ const AdminDashboard = () => {
     setProfilesLoading(true);
     adminGetProfileList()
       .then((res) => setApiProfilesList((res as { data: ProfileDTO[] }).data ?? []))
-      .catch((err) => toast({ title: "Could not load profiles", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Could not load profiles", err?.message))
       .finally(() => setProfilesLoading(false));
-  }, [useRealApi, toast]);
+  }, [useRealApi]);
 
   useEffect(() => {
     if (!useRealApi) return;
@@ -308,9 +296,7 @@ const AdminDashboard = () => {
     setDetailUser(u.role ? ({ ...u, role: u.role } as AdminUserDetail) : null);
   };
 
-  const showSuccess = (message: string, description?: string) => {
-    toast({ title: message, description, variant: "default" });
-  };
+  const showSuccess = toastSuccess;
 
   const handleUpdateRole = (userId: number, roleName: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
@@ -321,7 +307,7 @@ const AdminDashboard = () => {
           if (detailUser?.userId === userId) setDetailUser((d) => d ? { ...d, role: { roleId: 0, roleName } } : null);
           showSuccess("Role updated", "The user's role has been updated successfully.");
         })
-        .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }));
+        .catch((err) => toastError("Update failed", err?.message));
     } else {
       updateUserRole(userId, roleName);
       showSuccess("Role updated", "The user's role has been updated successfully.");
@@ -337,7 +323,7 @@ const AdminDashboard = () => {
           if (detailUser?.userId === u.userId) setDetailUser((d) => d ? { ...d, accountNonLocked: !d.accountNonLocked } : null);
           showSuccess(u.accountNonLocked ? "Account locked" : "Account unlocked", u.accountNonLocked ? "The user has been locked and cannot sign in." : "The user can sign in again.");
         })
-        .catch((err) => toast({ title: "Action failed", description: err?.message, variant: "destructive" }));
+        .catch((err) => toastError("Action failed", err?.message));
     } else {
       toggleUserLock(u.userId);
       showSuccess(u.accountNonLocked ? "Account locked" : "Account unlocked");
@@ -353,7 +339,7 @@ const AdminDashboard = () => {
           if (detailUser?.userId === u.userId) setDetailUser((d) => d ? { ...d, enabled: !d.enabled } : null);
           showSuccess(u.enabled ? "Account disabled" : "Account enabled", u.enabled ? "The user account has been disabled." : "The user account is active again.");
         })
-        .catch((err) => toast({ title: "Action failed", description: err?.message, variant: "destructive" }));
+        .catch((err) => toastError("Action failed", err?.message));
     } else {
       toggleUserEnabled(u.userId);
       showSuccess(u.enabled ? "Account disabled" : "Account enabled");
@@ -369,7 +355,7 @@ const AdminDashboard = () => {
         setNewPassword("");
         showSuccess("Password updated", "The user's password has been changed successfully. They can sign in with the new password.");
       })
-      .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Update failed", err?.message))
       .finally(() => setPwSubmitting(false));
   };
 
@@ -380,7 +366,7 @@ const AdminDashboard = () => {
         if (detailUser?.userId === userId) setDetailUser((d) => d ? { ...d, accountNonExpired: !expire } : null);
         showSuccess(expire ? "Account expired" : "Account extended", expire ? "The account has been marked as expired." : "The account expiry has been extended.");
       })
-      .catch((err) => toast({ title: "Action failed", description: err?.message, variant: "destructive" }));
+      .catch((err) => toastError("Action failed", err?.message));
   };
 
   const handleCredentialsExpiry = (userId: number, expire: boolean) => {
@@ -390,7 +376,7 @@ const AdminDashboard = () => {
         if (detailUser?.userId === userId) setDetailUser((d) => d ? { ...d, credentialsNonExpired: !expire } : null);
         showSuccess(expire ? "Credentials expired" : "Credentials extended", expire ? "The user will need to reset their password." : "Credentials validity has been extended.");
       })
-      .catch((err) => toast({ title: "Action failed", description: err?.message, variant: "destructive" }));
+      .catch((err) => toastError("Action failed", err?.message));
   };
 
   const openConfirm = (title: string, description: string, confirmLabel: string, variant: "default" | "destructive", onConfirm: () => void) => {
@@ -424,12 +410,12 @@ const AdminDashboard = () => {
       const id = profile.id;
       if (action === "approve") {
         apiApproveProfile(role, id, note)
-          .then(() => { toast({ title: "Profile approved" }); done(); })
-          .catch((err) => { toast({ title: "Approve failed", description: err?.message, variant: "destructive" }); setProfileActionSubmitting(false); });
+          .then(() => { toastSuccess("Profile approved"); done(); })
+          .catch((err) => { toastError("Approve failed", err?.message); setProfileActionSubmitting(false); });
       } else {
         apiRejectProfile(role, id, note ?? "Rejected.")
-          .then(() => { toast({ title: "Profile rejected" }); done(); })
-          .catch((err) => { toast({ title: "Reject failed", description: err?.message, variant: "destructive" }); setProfileActionSubmitting(false); });
+          .then(() => { toastSuccess("Profile rejected"); done(); })
+          .catch((err) => { toastError("Reject failed", err?.message); setProfileActionSubmitting(false); });
       }
     } else {
       const p = profile as AdminProfileItem;
@@ -440,7 +426,7 @@ const AdminDashboard = () => {
       } else {
         if (action === "approve") approveTenantProfile(p.id, note); else rejectTenantProfile(p.id, note ?? "Rejected.");
       }
-      toast({ title: action === "approve" ? "Profile approved" : "Profile rejected" });
+      toastSuccess(action === "approve" ? "Profile approved" : "Profile rejected");
       done();
     }
   };
@@ -498,33 +484,14 @@ const AdminDashboard = () => {
 
   const openPropertyAdd = () => {
     setEditingProperty(null);
-    setPropertyForm({
-      title: "",
-      description: "",
-      propertyType: "APARTMENT",
-      price: 0,
-      bedrooms: null,
-      bathrooms: null,
-      area: null,
-      rating: null,
-      reviewCount: null,
-      furnishing: null,
-      amenities: [],
-      isFeatured: false,
-      tenantUserName: null,
-      latitude: null,
-      longitude: null,
-      address: "",
-      city: "",
-      state: "",
-      pinCode: "",
-      images: [],
-    });
+    setPropertyForm({ ...EMPTY_PROPERTY_FORM });
+    setPropertyImageFiles([]);
     setPropertyDialogOpen("add");
   };
 
   const openPropertyEdit = (p: PropertyDTO) => {
     setEditingProperty(p);
+    setPropertyImageFiles([]);
     setPropertyForm({
       title: p.title,
       description: p.description ?? "",
@@ -548,19 +515,6 @@ const AdminDashboard = () => {
       images: p.images ?? [],
     });
     setPropertyDialogOpen("edit");
-  };
-
-  const DESCRIPTION_MAX_LENGTH = 2000;
-  const COMMON_AMENITIES = ["Parking", "Gym", "Lift", "Power Backup", "Security", "Water Backup", "Garden", "Swimming Pool", "Clubhouse", "AC", "Wi-Fi", "24/7 Water"];
-
-  const isPincodeValidForState = (pin: string, stateName: string): boolean => {
-    if (!pin || pin.length !== 6) return false;
-    const state = indianStates.find((s) => s.name === stateName);
-    if (!state) return true;
-    const range = statePincodeRanges[state.code];
-    if (!range?.samples?.length) return true;
-    const allowedPrefixes = new Set(range.samples.map((s) => s.slice(0, 2)));
-    return allowedPrefixes.has(pin.slice(0, 2));
   };
 
   const PROPERTY_REQUIRED = {
@@ -608,21 +562,25 @@ const AdminDashboard = () => {
     city: propertyForm.city.trim(),
     state: propertyForm.state.trim(),
     pinCode: propertyForm.pinCode.trim(),
-    images: Array.isArray(propertyForm.images) ? propertyForm.images.filter(Boolean) : [],
+    images: filterExternalPropertyImageUrlsOnly(Array.isArray(propertyForm.images) ? propertyForm.images : []),
   });
 
   const handleCreateProperty = () => {
     const payload = buildPropertyPayload();
     setPropertySubmitting(true);
-    createProperty(payload)
-      .then((res) => {
-        const data = (res as { data: PropertyDTO }).data;
-        setApiProperties((prev) => [...prev, data]);
-        setPropertyDialogOpen(null);
-        setEditingProperty(null);
-        showSuccess("Property created", "The property has been added successfully.");
-      })
-      .catch((err) => toast({ title: "Create failed", description: err?.message, variant: "destructive" }))
+    const onDone = (data: PropertyDTO) => {
+      setApiProperties((prev) => [...prev, data]);
+      showSuccess("Property created", "The property has been added successfully.");
+      setPropertyDialogOpen(null);
+      setEditingProperty(null);
+      setPropertyImageFiles([]);
+    };
+    const req = propertyImageFiles.length > 0
+      ? createPropertyWithImages(payload, propertyImageFiles)
+      : createProperty(payload);
+    req
+      .then((res) => onDone((res as { data: PropertyDTO }).data))
+      .catch((err) => toastError("Create failed", err?.message))
       .finally(() => setPropertySubmitting(false));
   };
 
@@ -630,15 +588,19 @@ const AdminDashboard = () => {
     if (!editingProperty) return;
     const payload = buildPropertyPayload();
     setPropertySubmitting(true);
-    updateProperty(editingProperty.id, payload)
-      .then((res) => {
-        const data = (res as { data: PropertyDTO }).data;
-        setApiProperties((prev) => prev.map((p) => (p.id === data.id ? data : p)));
-        setPropertyDialogOpen(null);
-        setEditingProperty(null);
-        showSuccess("Property updated", "The property has been updated successfully.");
-      })
-      .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }))
+    const onDone = (data: PropertyDTO) => {
+      setApiProperties((prev) => prev.map((p) => (p.id === data.id ? data : p)));
+      showSuccess("Property updated", "The property has been updated successfully.");
+      setPropertyDialogOpen(null);
+      setEditingProperty(null);
+      setPropertyImageFiles([]);
+    };
+    const req = propertyImageFiles.length > 0
+      ? updatePropertyWithImages(editingProperty.id, payload, propertyImageFiles)
+      : updateProperty(editingProperty.id, payload);
+    req
+      .then((res) => onDone((res as { data: PropertyDTO }).data))
+      .catch((err) => toastError("Update failed", err?.message))
       .finally(() => setPropertySubmitting(false));
   };
 
@@ -655,7 +617,7 @@ const AdminDashboard = () => {
               setApiProperties((prev) => prev.filter((x) => x.id !== p.id));
               showSuccess("Property deleted", "The property has been removed.");
             })
-            .catch((err) => toast({ title: "Delete failed", description: err?.message, variant: "destructive" }));
+            .catch((err) => toastError("Delete failed", err?.message));
         } else {
           deleteProperty(p.id);
           showSuccess("Property deleted");
@@ -673,10 +635,10 @@ const AdminDashboard = () => {
             if (data) setApiProperties((prev) => prev.map((x) => (x.id === data.id ? data : x)));
             showSuccess("Property approved", "The property is now available.");
           })
-          .catch((err) => toast({ title: "Approve failed", description: err?.message, variant: "destructive" }));
+          .catch((err) => toastError("Approve failed", err?.message));
       } else {
         approveProperty(p.id);
-        toast({ title: "Approved" });
+        toastSuccess("Approved");
       }
     });
   };
@@ -690,10 +652,10 @@ const AdminDashboard = () => {
             if (data) setApiProperties((prev) => prev.map((x) => (x.id === data.id ? data : x)));
             showSuccess("Property rejected", "The listing has been rejected.");
           })
-          .catch((err) => toast({ title: "Reject failed", description: err?.message, variant: "destructive" }));
+          .catch((err) => toastError("Reject failed", err?.message));
       } else {
         rejectProperty(p.id);
-        toast({ title: "Rejected" });
+        toastSuccess("Rejected");
       }
     });
   };
@@ -731,10 +693,10 @@ const AdminDashboard = () => {
             if (data) setApiProperties((prev) => prev.map((x) => (x.id === data.id ? data : x)));
             showSuccess("Status updated", `Property is now ${newStatus.replace("_", " ")}.`);
           })
-          .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }));
+          .catch((err) => toastError("Update failed", err?.message));
       } else {
         demoUpdateProperty(p.id, { status: newStatus });
-        toast({ title: "Status updated" });
+        toastSuccess("Status updated");
       }
     });
   };
@@ -742,7 +704,7 @@ const AdminDashboard = () => {
   const submitPropertyWithConfirm = () => {
     const validation = validatePropertyForm();
     if (!validation.valid) {
-      toast({ title: "Fill in mandatory fields", description: validation.message, variant: "destructive" });
+      toastError("Fill in mandatory fields", validation.message);
       return;
     }
     if (propertyDialogOpen === "add") {
@@ -816,45 +778,45 @@ const AdminDashboard = () => {
     if (useRealApi) {
       if (status === "RESOLVED") {
         if (!complaintNote?.trim()) {
-          toast({ title: "Resolution note required", variant: "destructive" });
+          toastError("Resolution note required");
           return;
         }
         openConfirm("Resolve complaint?", "This will mark the complaint as resolved. This action cannot be undone.", "Resolve", "default", () => {
           resolveComplaint(id, complaintNote.trim())
             .then(() => {
-              toast({ title: "Complaint resolved", description: "The complaint has been marked as resolved." });
+              toastSuccess("Complaint resolved", "The complaint has been marked as resolved.");
               setComplaintActionId(null); setComplaintNote("");
               refetchComplaints();
               setDetailItem(null);
             })
-            .catch((err) => toast({ title: "Failed to resolve", description: (err as Error)?.message, variant: "destructive" }));
+            .catch((err) => toastError("Failed to resolve", (err as Error)?.message));
         });
         return;
       }
       openConfirm("Update status?", `Change complaint status to ${status.replace("_", " ")}?`, "Update", "default", () => {
         apiUpdateComplaintStatus(id, status as ComplaintStatus)
           .then(() => {
-            toast({ title: "Status updated", description: `Complaint is now ${status.replace("_", " ")}.` });
+            toastSuccess("Status updated", `Complaint is now ${status.replace("_", " ")}.`);
             refetchComplaints();
             setDetailItem(null);
           })
-          .catch((err) => toast({ title: "Failed to update status", description: (err as Error)?.message, variant: "destructive" }));
+          .catch((err) => toastError("Failed to update status", (err as Error)?.message));
       });
       return;
     }
     updateComplaintStatus(id, status, complaintNote || undefined);
-    toast({ title: `Complaint ${status.toLowerCase()}` });
+    toastSuccess(`Complaint ${status.toLowerCase()}`);
     setComplaintActionId(null); setComplaintNote("");
   };
 
   const handleAssignComplaint = () => {
     const { complaintId, assignToUserId } = assignDialog;
     if (!complaintId || !assignToUserId) {
-      toast({ title: "Select a user to assign", variant: "destructive" });
+      toastError("Select a user to assign");
       return;
     }
     if (!useRealApi) {
-      toast({ title: "Complaint assigned", description: "The complaint has been assigned successfully." });
+      toastSuccess("Complaint assigned", "The complaint has been assigned successfully.");
       setAssignDialog({ open: false, complaintId: null, assignToUserId: 0 });
       setDetailItem(null);
       return;
@@ -862,12 +824,12 @@ const AdminDashboard = () => {
     setAssignSubmitting(true);
     assignComplaint(complaintId, assignToUserId)
       .then(() => {
-        toast({ title: "Complaint assigned", description: "The complaint has been assigned successfully." });
+        toastSuccess("Complaint assigned", "The complaint has been assigned successfully.");
         setAssignDialog({ open: false, complaintId: null, assignToUserId: 0 });
         refetchComplaints();
         setDetailItem(null);
       })
-      .catch((err) => toast({ title: "Assign failed", description: (err as Error)?.message, variant: "destructive" }))
+      .catch((err) => toastError("Assign failed", (err as Error)?.message))
       .finally(() => setAssignSubmitting(false));
   };
 
@@ -875,7 +837,7 @@ const AdminDashboard = () => {
     if (!detailItem || detailItem.type !== "complaint" || !complaintMessageText.trim()) return;
     const id = (detailItem.data as ComplaintDTO).id;
     if (!useRealApi) {
-      toast({ title: "Message sent" });
+      toastSuccess("Message sent");
       setComplaintMessageText("");
       return;
     }
@@ -888,9 +850,9 @@ const AdminDashboard = () => {
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
         if (Array.isArray(list)) setComplaintMessages(list);
-        toast({ title: "Message sent" });
+        toastSuccess("Message sent");
       })
-      .catch((err) => toast({ title: "Failed to send", description: (err as Error)?.message, variant: "destructive" }))
+      .catch((err) => toastError("Failed to send", (err as Error)?.message))
       .finally(() => setComplaintMessageSending(false));
   };
 
@@ -909,7 +871,7 @@ const AdminDashboard = () => {
     if (!complaintId || !newStatus) return;
     if (!useRealApi) {
       updateComplaintStatus(complaintId, newStatus, newStatus === "RESOLVED" ? message?.trim() : undefined);
-      toast({ title: newStatus === "RESOLVED" ? "Complaint resolved" : "Status updated" });
+      toastSuccess(newStatus === "RESOLVED" ? "Complaint resolved" : "Status updated");
       setStatusUpdateDialog({ open: false, complaintId: null, newStatus: null, currentStatus: null, message: "" });
       if (detailItem?.type === "complaint" && (detailItem.data as ComplaintDTO).id === complaintId) {
         setDetailItem({ type: "complaint", data: { ...(detailItem.data as object), status: newStatus } });
@@ -928,12 +890,12 @@ const AdminDashboard = () => {
     };
     if (newStatus === "RESOLVED" && message.trim()) {
       resolveComplaint(complaintId, message.trim())
-        .then((res) => { toast({ title: "Complaint resolved", description: res?.message }); done(res); })
-        .catch((err) => { toast({ title: "Failed to resolve", description: (err as Error)?.message, variant: "destructive" }); setComplaintStatusUpdating(false); });
+        .then((res) => { toastSuccess("Complaint resolved", res?.message); done(res); })
+        .catch((err) => { toastError("Failed to resolve", (err as Error)?.message); setComplaintStatusUpdating(false); });
     } else {
       apiUpdateComplaintStatus(complaintId, newStatus)
-        .then((res) => { toast({ title: "Status updated", description: res?.message }); done(res); })
-        .catch((err) => { toast({ title: "Failed to update status", description: (err as Error)?.message, variant: "destructive" }); setComplaintStatusUpdating(false); });
+        .then((res) => { toastSuccess("Status updated", res?.message); done(res); })
+        .catch((err) => { toastError("Failed to update status", (err as Error)?.message); setComplaintStatusUpdating(false); });
     }
   };
 
@@ -943,7 +905,7 @@ const AdminDashboard = () => {
       if (detailItem?.type === "complaint" && (detailItem.data as ComplaintDTO).id === complaintId) {
         setDetailItem({ type: "complaint", data: { ...(detailItem.data as object), status: newStatus } });
       }
-      toast({ title: "Status updated" });
+      toastSuccess("Status updated");
       return;
     }
     setComplaintStatusUpdating(true);
@@ -954,9 +916,9 @@ const AdminDashboard = () => {
           setDetailItem({ type: "complaint", data: updated });
         }
         setApiComplaints((prev) => prev.map((c) => (c.id === complaintId ? updated : c)).filter(Boolean));
-        toast({ title: "Status updated", description: res?.message });
+        toastSuccess("Status updated", res?.message);
       })
-      .catch((err) => toast({ title: "Failed to update status", description: (err as Error)?.message, variant: "destructive" }))
+      .catch((err) => toastError("Failed to update status", (err as Error)?.message))
       .finally(() => setComplaintStatusUpdating(false));
   };
 
@@ -1612,7 +1574,7 @@ const AdminDashboard = () => {
                           <div className="flex flex-wrap gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
                             {c.status === "OPEN" && (
                               <Button size="sm" variant="outline" className="h-8 text-xs" onClick={(e) => { e.stopPropagation(); openConfirm("Mark as In Progress?", "This will set the complaint status to In Progress.", "Update status", "default", () => {
-                                if (useRealApi) apiUpdateComplaintStatus(c.id, "IN_PROGRESS").then(refetchComplaints).then(() => toast({ title: "Status updated" })).catch((err) => toast({ title: "Failed", description: (err as Error)?.message, variant: "destructive" }));
+                                if (useRealApi) apiUpdateComplaintStatus(c.id, "IN_PROGRESS").then(refetchComplaints).then(() => toastSuccess("Status updated")).catch((err) => toastError("Failed", (err as Error)?.message));
                                 else handleComplaintAction(c.id, "IN_PROGRESS");
                               }); }}>Investigate</Button>
                             )}
@@ -2177,215 +2139,45 @@ const AdminDashboard = () => {
       </Dialog>
 
       {/* Add/Edit Property Dialog */}
-      <Dialog open={propertyDialogOpen !== null} onOpenChange={(open) => { if (!open) { setPropertyDialogOpen(null); setEditingProperty(null); } }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{propertyDialogOpen === "add" ? "Add Property" : "Edit Property"}</DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">Fields marked with <span className="text-destructive">*</span> are required.</p>
-          </DialogHeader>
-          <div className="grid gap-6 py-2">
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Basic details</p>
-                <div className="grid gap-3">
-                <div className="grid gap-2">
-                  <Label>Title <span className="text-destructive">*</span></Label>
-                  <Input value={propertyForm.title} onChange={(e) => setPropertyForm((f) => ({ ...f, title: e.target.value }))} placeholder="Property title" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Description <span className="text-destructive">*</span> <span className="text-muted-foreground font-normal">({propertyForm.description.length} / {DESCRIPTION_MAX_LENGTH})</span></Label>
-                  <Textarea value={propertyForm.description} onChange={(e) => setPropertyForm((f) => ({ ...f, description: e.target.value.slice(0, DESCRIPTION_MAX_LENGTH) }))} placeholder="Describe the property" rows={3} maxLength={DESCRIPTION_MAX_LENGTH} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Type <span className="text-destructive">*</span></Label>
-                    <Select value={propertyForm.propertyType} onValueChange={(v) => setPropertyForm((f) => ({ ...f, propertyType: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
-                      <SelectContent>
-                        {["APARTMENT", "FLAT", "HOUSE", "VILLA", "PG", "CO-LIVING", "HOSTEL", "ROOM", "PLOT", "COMMERCIAL", "GUEST_HOUSE"].map((t) => (
-                          <SelectItem key={t} value={t}>{t.replace(/_/g, " ")}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Price (₹) <span className="text-destructive">*</span></Label>
-                    <Input type="number" min={0} value={propertyForm.price || ""} onChange={(e) => setPropertyForm((f) => ({ ...f, price: e.target.value ? Number(e.target.value) : 0 }))} placeholder="e.g. 25000" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Specifications</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="grid gap-2">
-                  <Label>Bedrooms</Label>
-                  <Input type="number" min={0} value={propertyForm.bedrooms ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, bedrooms: e.target.value ? Number(e.target.value) : null }))} placeholder="—" disabled={propertyDialogOpen === "edit"} className={propertyDialogOpen === "edit" ? "opacity-60" : ""} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Bathrooms</Label>
-                  <Input type="number" min={0} value={propertyForm.bathrooms ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, bathrooms: e.target.value ? Number(e.target.value) : null }))} placeholder="—" disabled={propertyDialogOpen === "edit"} className={propertyDialogOpen === "edit" ? "opacity-60" : ""} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Area (sq ft)</Label>
-                  <Input type="number" min={0} value={propertyForm.area ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, area: e.target.value ? Number(e.target.value) : null }))} placeholder="—" disabled={propertyDialogOpen === "edit"} className={propertyDialogOpen === "edit" ? "opacity-60" : ""} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Furnishing</Label>
-                  <Select value={propertyForm.furnishing ?? ""} onValueChange={(v) => setPropertyForm((f) => ({ ...f, furnishing: v || null }))}>
-                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FURNISHED">Furnished</SelectItem>
-                      <SelectItem value="SEMI_FURNISHED">Semi Furnished</SelectItem>
-                      <SelectItem value="UNFURNISHED">Unfurnished</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="grid gap-2">
-                  <Label>Rating (0–5)</Label>
-                  <Input type="number" min={0} max={5} step={0.1} value={propertyForm.rating ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, rating: e.target.value ? Number(e.target.value) : null }))} placeholder="—" disabled={propertyDialogOpen === "edit"} className={propertyDialogOpen === "edit" ? "opacity-60" : ""} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Review count</Label>
-                  <Input type="number" min={0} value={propertyForm.reviewCount ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, reviewCount: e.target.value ? Number(e.target.value) : null }))} placeholder="—" disabled={propertyDialogOpen === "edit"} className={propertyDialogOpen === "edit" ? "opacity-60" : ""} />
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label>Amenities</Label>
-                <p className="text-xs text-muted-foreground">Select common amenities or add your own below.</p>
-                <div className="flex flex-wrap gap-2">
-                  {COMMON_AMENITIES.map((a) => {
-                    const selected = Array.isArray(propertyForm.amenities) && propertyForm.amenities.includes(a);
-                    return (
-                      <button
-                        key={a}
-                        type="button"
-                        onClick={() => setPropertyForm((f) => ({
-                          ...f,
-                          amenities: selected ? (f.amenities ?? []).filter((x) => x !== a) : [...(f.amenities ?? []), a],
-                        }))}
-                        className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${selected ? "bg-primary text-primary-foreground border-primary" : "bg-muted/50 border-border hover:bg-muted"}`}
-                      >
-                        {a}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {(propertyForm.amenities ?? []).filter((a) => !COMMON_AMENITIES.includes(a)).map((a) => (
-                    <span key={a} className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs">
-                      {a}
-                      <button type="button" onClick={() => setPropertyForm((f) => ({ ...f, amenities: (f.amenities ?? []).filter((x) => x !== a) }))} className="hover:text-destructive" aria-label="Remove">×</button>
-                    </span>
-                  ))}
-                  <input
-                    type="text"
-                    placeholder="Add custom (e.g. Pet friendly)"
-                    className="flex-1 min-w-[120px] rounded-md border border-input bg-background px-2.5 py-1.5 text-xs"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        const v = (e.target as HTMLInputElement).value.trim();
-                        if (v && !(propertyForm.amenities ?? []).includes(v)) setPropertyForm((f) => ({ ...f, amenities: [...(f.amenities ?? []), v] }));
-                        (e.target as HTMLInputElement).value = "";
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v && !(propertyForm.amenities ?? []).includes(v)) { setPropertyForm((f) => ({ ...f, amenities: [...(f.amenities ?? []), v] })); e.target.value = ""; }
-                    }}
-                  />
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="isFeatured" checked={!!propertyForm.isFeatured} onChange={(e) => setPropertyForm((f) => ({ ...f, isFeatured: e.target.checked }))} className="rounded border-border" />
-                <Label htmlFor="isFeatured" className="cursor-pointer">Featured</Label>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Location</p>
-              <div className="grid gap-3">
-                <div className="grid gap-2">
-                  <Label>Address <span className="text-destructive">*</span></Label>
-                  <Input value={propertyForm.address} onChange={(e) => setPropertyForm((f) => ({ ...f, address: e.target.value }))} placeholder="Street address" />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 sm:items-start">
-                  <div className="grid gap-1.5 min-h-[2.5rem] sm:min-h-0">
-                    <Label className="text-sm leading-none">State <span className="text-destructive">*</span></Label>
-                    <Select value={propertyForm.state || "_"} onValueChange={(v) => setPropertyForm((f) => ({ ...f, state: v === "_" ? "" : v }))}>
-                      <SelectTrigger className="h-9 w-full"><SelectValue placeholder="Select state" /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="_">Select state</SelectItem>
-                        {indianStates.map((s) => (
-                          <SelectItem key={s.code} value={s.name}>{s.name}</SelectItem>
-                        ))}
-                        {propertyForm.state && !indianStates.some((s) => s.name === propertyForm.state) && (
-                          <SelectItem value={propertyForm.state}>{propertyForm.state}</SelectItem>
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-1.5 min-h-[2.5rem] sm:min-h-0">
-                    <Label className="text-sm leading-none">City <span className="text-destructive">*</span></Label>
-                    <Input className="h-9 w-full" value={propertyForm.city} onChange={(e) => setPropertyForm((f) => ({ ...f, city: e.target.value.trim() }))} placeholder="e.g. Bengaluru" maxLength={50} />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label className="text-sm leading-none">Pin code <span className="text-destructive">*</span></Label>
-                    <div className="space-y-1">
-                      <div className="relative">
-                        <Input
-                          className={`h-9 w-full ${propertyForm.pinCode.length === 6 && propertyForm.state && isPincodeValidForState(propertyForm.pinCode, propertyForm.state) ? "pr-8" : ""}`}
-                          value={propertyForm.pinCode}
-                          onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 6); setPropertyForm((f) => ({ ...f, pinCode: v })); }}
-                          placeholder="6 digits"
-                          maxLength={6}
-                          inputMode="numeric"
-                        />
-                        {propertyForm.pinCode.length === 6 && propertyForm.state && isPincodeValidForState(propertyForm.pinCode, propertyForm.state) && (
-                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-green-600" aria-hidden>
-                            <Check className="h-4 w-4" strokeWidth={2.5} />
-                          </span>
-                        )}
-                      </div>
-                      <div className="h-6 flex items-center">
-                        {propertyForm.pinCode.length > 0 && propertyForm.pinCode.length !== 6 && <p className="text-[10px] text-muted-foreground">Enter exactly 6 digits</p>}
-                        {propertyForm.pinCode.length === 6 && propertyForm.state && !isPincodeValidForState(propertyForm.pinCode, propertyForm.state) && (
-                          <p className="text-[10px] text-destructive">This pin code does not belong to the selected state.</p>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Latitude</Label>
-                    <Input type="number" step="any" value={propertyForm.latitude ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, latitude: e.target.value ? Number(e.target.value) : null }))} placeholder="—" />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Longitude</Label>
-                    <Input type="number" step="any" value={propertyForm.longitude ?? ""} onChange={(e) => setPropertyForm((f) => ({ ...f, longitude: e.target.value ? Number(e.target.value) : null }))} placeholder="—" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Media</p>
-              <div className="grid gap-2">
-                <Label>Image URLs (one per line)</Label>
-                <Textarea value={Array.isArray(propertyForm.images) ? propertyForm.images.join("\n") : ""} onChange={(e) => setPropertyForm((f) => ({ ...f, images: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) }))} placeholder="https://..." rows={3} />
-              </div>
-            </div>
+      <Dialog open={propertyDialogOpen !== null} onOpenChange={(open) => { if (!open) { setPropertyDialogOpen(null); setEditingProperty(null); setPropertyImageFiles([]); } }}>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] min-h-0 w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-xl font-semibold tracking-tight">{propertyDialogOpen === "add" ? "Add property" : "Edit property"}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Fields marked <span className="text-destructive">*</span> are required.
+            </p>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0 pt-2">
-            <Button variant="outline" onClick={() => { setPropertyDialogOpen(null); setEditingProperty(null); }}>Cancel</Button>
-            <Button onClick={submitPropertyWithConfirm} disabled={propertySubmitting}>
-              {propertySubmitting ? "Saving…" : propertyDialogOpen === "add" ? "Create" : "Update"}
-            </Button>
-          </DialogFooter>
+          <div className="min-h-0 min-w-0 max-h-[calc(min(92vh,760px)_-_13.5rem)] overflow-y-auto overscroll-contain bg-background px-5 py-4 scroll-smooth sm:px-7">
+            <ThemeProvider theme={adminMuiTheme}>
+              <div className="min-h-0 min-w-0">
+                <PropertyFormMuiFields
+                  form={propertyForm}
+                  setForm={setPropertyForm}
+                  stateMode="name"
+                  hideLatLong={false}
+                  showAdminExtras
+                  disableRatingReview={propertyDialogOpen === "edit"}
+                  uploadedFiles={useRealApi ? propertyImageFiles : []}
+                  onUploadedFilesChange={useRealApi ? setPropertyImageFiles : undefined}
+                />
+              </div>
+            </ThemeProvider>
+          </div>
+          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => { setPropertyDialogOpen(null); setEditingProperty(null); setPropertyImageFiles([]); }}>Cancel</Button>
+              <Button type="button" className="min-h-10 w-full sm:w-auto" onClick={submitPropertyWithConfirm} disabled={propertySubmitting}>
+                {propertySubmitting ? "Saving…" : propertyDialogOpen === "add" ? "Create" : "Update"}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

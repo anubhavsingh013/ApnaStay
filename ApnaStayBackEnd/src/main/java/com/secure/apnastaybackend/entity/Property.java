@@ -97,6 +97,11 @@ public class Property {
     @Column(name = "image_url")
     private List<String> images = new ArrayList<>();
 
+    /** Binary images stored in DB (uploaded from frontend). URLs are derived at API response time. */
+    @OneToMany(mappedBy = "property", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy("sortOrder ASC")
+    private List<PropertyImageFile> imageFiles = new ArrayList<>();
+
     @Column(nullable = false)
     @NotBlank(message = "Owner username is required")
     private String ownerUserName;

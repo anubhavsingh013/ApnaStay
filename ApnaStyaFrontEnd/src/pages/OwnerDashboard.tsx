@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher, { getDemoUser, subscribeDemoUser } from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData, type Complaint } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import type { PropertyRequest, PropertyDTO } from "@/lib/api";
 import {
   getProfile,
@@ -21,6 +21,12 @@ import {
   updateComplaintStatus as apiUpdateComplaintStatus,
   getUserIdByUsername,
   getDecodedToken,
+  createProperty as apiCreateProperty,
+  createPropertyWithImages,
+  updateProperty as apiUpdateProperty,
+  updatePropertyWithImages,
+  filterExternalPropertyImageUrlsOnly,
+  deleteProperty as apiDeleteProperty,
   type ProfileDTO,
   type ComplaintDTO,
   type ComplaintMessageDTO,
@@ -41,8 +47,13 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
-import { indianStates, getCitiesForState, statePincodeRanges, isPincodeValidForState } from "@/constants/indianStates";
-import { DatePickerSelects } from "@/components/common/DatePickerSelects";
+import { indianStates, statePincodeRanges, isPincodeValidForState } from "@/constants/indianStates";
+import { EMPTY_PROPERTY_FORM, isPropertyFormValid } from "@/utils/propertyConstants";
+import { PropertyFormMuiFields } from "@/components/dashboard/PropertyFormMuiFields";
+import { RaiseComplaintMuiFields } from "@/components/dashboard/RaiseComplaintMuiFields";
+import { OwnerProfileMuiForm } from "@/components/profile/OwnerProfileMuiForm";
+import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
@@ -52,19 +63,20 @@ const OWNERS = ["rajesh_owner"];
 
 const COMPLAINT_NONE_VALUE = "__none__";
 
+const ownerProfileMuiTheme = createTheme({
+  palette: { mode: "light", primary: { main: "#0284c7" } },
+});
+
 const tabs = [
   { label: "Overview", icon: Building2, id: "overview" },
   { label: "Account", icon: User, id: "profile" },
   { label: "My Assets", icon: Building2, id: "assets" },
+  { label: "Add Property", icon: Plus, id: "add-property" },
   { label: "My Tenants", icon: Users, id: "requests" },
   { label: "Complaints", icon: FileText, id: "complaints" },
   { label: "Payments", icon: CreditCard, id: "payments" },
   { label: "Alerts", icon: Bell, id: "notifications" },
 ];
-
-const propertyTypes = ["APARTMENT", "FLAT", "HOUSE", "VILLA", "PG", "CO-LIVING", "HOSTEL", "ROOM", "PLOT", "COMMERCIAL", "GUEST_HOUSE"] as const;
-const DESCRIPTION_MAX_LENGTH = 2000;
-const COMMON_AMENITIES = ["Parking", "Gym", "Lift", "Power Backup", "Security", "Water Backup", "Garden", "Swimming Pool", "Clubhouse", "AC", "Wi-Fi", "24/7 Water"];
 
 function mapApiProfileToOwnerForm(d: ProfileDTO) {
   const stateCode = indianStates.find((s) => s.name === d.state)?.code ?? d.state;
@@ -85,34 +97,10 @@ function mapApiProfileToOwnerForm(d: ProfileDTO) {
   };
 }
 
-const emptyForm: PropertyRequest = {
-  title: "",
-  description: "",
-  propertyType: "APARTMENT",
-  price: 0,
-  bedrooms: null,
-  bathrooms: null,
-  area: null,
-  rating: null,
-  reviewCount: null,
-  furnishing: null,
-  amenities: [],
-  isFeatured: false,
-  tenantUserName: null,
-  latitude: null,
-  longitude: null,
-  address: "",
-  city: "",
-  state: "",
-  pinCode: "",
-  images: [],
-};
-
 const OwnerDashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, dashboardPath } = useAuth();
-  const { toast } = useToast();
   const {
     demoMode, properties, addProperty, updateProperty, deleteProperty,
     bookings, updateBookingStatus, payments, complaints, raiseComplaint, updateComplaintStatus,
@@ -120,9 +108,10 @@ const OwnerDashboard = () => {
     isOwnerProfileApproved, submitOwnerProfile,
   } = useDemoData();
   const [activeTab, setActiveTab] = useState("overview");
-  const [form, setForm] = useState<PropertyRequest>({ ...emptyForm });
+  const [form, setForm] = useState<PropertyRequest>({ ...EMPTY_PROPERTY_FORM });
   const [editingId, setEditingId] = useState<number | null>(null);
   const [propertyDialogOpen, setPropertyDialogOpen] = useState<"add" | "edit" | null>(null);
+  const [propertyImageFiles, setPropertyImageFiles] = useState<File[]>([]);
   const [demoOwner, setDemoOwner] = useState(getDemoUser);
 
   useEffect(() => subscribeDemoUser(() => setDemoOwner(getDemoUser())), []);
@@ -176,6 +165,7 @@ const OwnerDashboard = () => {
   const [profileSubmitDialogOpen, setProfileSubmitDialogOpen] = useState(false);
   const [verifySubmitDialogOpen, setVerifySubmitDialogOpen] = useState(false);
   const [demoLoginPromptOpen, setDemoLoginPromptOpen] = useState(false);
+  const [ownerPendingApprovalBannerDismissed, setOwnerPendingApprovalBannerDismissed] = useState(false);
   const [ownerProfileForm, setOwnerProfileForm] = useState({
     fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", email: "",
     village: "", postOffice: "", policeStation: "", state: "", district: "", pincode: "",
@@ -233,7 +223,7 @@ const OwnerDashboard = () => {
           setProfileError("Could not load profile");
         }
         if (!isNotFound && msg) {
-          toast({ title: "Profile load failed", description: "Please try again later.", variant: "destructive" });
+          toastError("Profile load failed", "Please try again later.");
         }
       })
       .finally(() => setProfileLoading(false));
@@ -277,9 +267,9 @@ const OwnerDashboard = () => {
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
         if (Array.isArray(list)) setComplaintMessages(list);
-        toast({ title: "Message sent" });
+        toastSuccess("Message sent");
       })
-      .catch((err) => toast({ title: "Failed to send", description: (err as Error)?.message, variant: "destructive" }))
+      .catch((err) => toastError("Failed to send", (err as Error)?.message))
       .finally(() => setComplaintMessageSending(false));
   };
 
@@ -308,12 +298,12 @@ const OwnerDashboard = () => {
     };
     if (newStatus === "RESOLVED" && message.trim()) {
       resolveComplaint(complaintId, message.trim())
-        .then((res) => { toast({ title: "Complaint resolved", description: res?.message }); done(res); })
-        .catch((err) => { toast({ title: "Failed to resolve", description: (err as Error)?.message, variant: "destructive" }); setComplaintStatusUpdating(false); });
+        .then((res) => { toastSuccess("Complaint resolved", res?.message); done(res); })
+        .catch((err) => { toastError("Failed to resolve", (err as Error)?.message); setComplaintStatusUpdating(false); });
     } else {
       apiUpdateComplaintStatus(complaintId, newStatus)
-        .then((res) => { toast({ title: "Status updated", description: res?.message }); done(res); })
-        .catch((err) => { toast({ title: "Failed to update status", description: (err as Error)?.message, variant: "destructive" }); setComplaintStatusUpdating(false); });
+        .then((res) => { toastSuccess("Status updated", res?.message); done(res); })
+        .catch((err) => { toastError("Failed to update status", (err as Error)?.message); setComplaintStatusUpdating(false); });
     }
   };
 
@@ -326,13 +316,13 @@ const OwnerDashboard = () => {
           setDetailItem({ type: "complaint", data: updated });
         }
         setApiComplaints((prev) => prev.map((c) => (c.id === complaintId ? updated : c)).filter(Boolean));
-        toast({ title: "Status updated", description: res?.message });
+        toastSuccess("Status updated", res?.message);
       })
-      .catch((err) => toast({ title: "Failed to update status", description: (err as Error)?.message, variant: "destructive" }))
+      .catch((err) => toastError("Failed to update status", (err as Error)?.message))
       .finally(() => setComplaintStatusUpdating(false));
   };
 
-  useEffect(() => {
+  const refetchOwnerProperties = () => {
     if (!useRealApi) return;
     setApiOwnerPropertiesLoading(true);
     getProperties()
@@ -343,6 +333,11 @@ const OwnerDashboard = () => {
       })
       .catch(() => setApiOwnerProperties([]))
       .finally(() => setApiOwnerPropertiesLoading(false));
+  };
+
+  useEffect(() => {
+    if (!useRealApi) return;
+    refetchOwnerProperties();
   }, [useRealApi]);
 
   useEffect(() => {
@@ -416,18 +411,15 @@ const OwnerDashboard = () => {
   const pendingRequests = myBookings.filter(b => b.status === "REQUESTED");
   const decodedToken = getDecodedToken();
 
-  // Form state for location
-  const selectedFormState = useMemo(() => indianStates.find(s => s.code === form.state), [form.state]);
-  const formCities = useMemo(() => form.state ? getCitiesForState(form.state) : [], [form.state]);
-  const formPincodes = useMemo(() => form.state ? (statePincodeRanges[form.state]?.samples || []) : [], [form.state]);
-
   const openPropertyAdd = () => {
-    setForm({ ...emptyForm });
+    setForm({ ...EMPTY_PROPERTY_FORM });
+    setPropertyImageFiles([]);
     setEditingId(null);
     setPropertyDialogOpen("add");
   };
 
   const openPropertyEdit = (p: typeof properties[0]) => {
+    setPropertyImageFiles([]);
     const stateCode = typeof p.state === "string" && p.state.length === 2 ? p.state : (indianStates.find(s => s.name === p.state)?.code ?? form.state);
     setForm({
       title: p.title,
@@ -455,56 +447,115 @@ const OwnerDashboard = () => {
     setPropertyDialogOpen("edit");
   };
 
-  const handleDelete = (id: number) => { deleteProperty(id); toast({ title: "Property deleted" }); };
-
-  const buildPropertyPayload = (): Omit<typeof properties[0], "id" | "createdAt" | "updatedAt"> => {
-    const stateName = indianStates.find(s => s.code === form.state)?.name ?? form.state;
-    return {
-      title: form.title.trim(),
-      description: form.description.trim(),
-      propertyType: form.propertyType,
-      price: Number(form.price) || 0,
-      bedrooms: form.bedrooms != null ? Number(form.bedrooms) : null,
-      bathrooms: form.bathrooms != null ? Number(form.bathrooms) : null,
-      area: form.area != null ? Number(form.area) : null,
-      rating: form.rating != null ? Number(form.rating) : null,
-      reviewCount: form.reviewCount != null ? Number(form.reviewCount) : null,
-      furnishing: form.furnishing || null,
-      amenities: Array.isArray(form.amenities) ? form.amenities : [],
-      isFeatured: form.isFeatured ?? false,
-      tenantUserName: null,
-      latitude: form.latitude != null ? Number(form.latitude) : null,
-      longitude: form.longitude != null ? Number(form.longitude) : null,
-      address: form.address.trim(),
-      city: form.city.trim(),
-      state: stateName,
-      pinCode: form.pinCode.trim(),
-      images: Array.isArray(form.images) ? form.images.filter(Boolean) : [],
-      ownerUserName: currentOwner,
-      status: editingId ? (properties.find(pr => pr.id === editingId)?.status ?? "PENDING") : "PENDING",
-    };
+  const handleDelete = (id: number) => {
+    if (useRealApi) {
+      apiDeleteProperty(id)
+        .then(() => {
+          toastSuccess("Property deleted");
+          refetchOwnerProperties();
+        })
+        .catch((err) => toastError("Delete failed", (err as Error)?.message));
+    } else {
+      deleteProperty(id);
+      toastSuccess("Property deleted");
+    }
   };
+
+  const stateNameForForm = indianStates.find(s => s.code === form.state)?.name ?? form.state;
+
+  const buildPropertyRequest = (): PropertyRequest => ({
+    title: form.title.trim(),
+    description: form.description.trim(),
+    propertyType: form.propertyType,
+    price: Number(form.price) || 0,
+    bedrooms: form.bedrooms != null ? Number(form.bedrooms) : null,
+    bathrooms: form.bathrooms != null ? Number(form.bathrooms) : null,
+    area: form.area != null ? Number(form.area) : null,
+    rating: form.rating != null ? Number(form.rating) : null,
+    reviewCount: form.reviewCount != null ? Number(form.reviewCount) : null,
+    furnishing: form.furnishing || null,
+    amenities: Array.isArray(form.amenities) ? form.amenities : [],
+    isFeatured: form.isFeatured ?? false,
+    tenantUserName: null,
+    latitude: null,
+    longitude: null,
+    address: form.address.trim(),
+    city: form.city.trim(),
+    state: stateNameForForm,
+    pinCode: form.pinCode.trim(),
+    images: filterExternalPropertyImageUrlsOnly(Array.isArray(form.images) ? form.images : []),
+  });
+
+  const buildPropertyPayload = (): Omit<PropertyDTO, "id" | "createdAt" | "updatedAt"> => ({
+    ...buildPropertyRequest(),
+    ownerUserName: currentOwner,
+    status: editingId ? (properties.find(pr => pr.id === editingId)?.status ?? "PENDING") : "PENDING",
+  } as Omit<PropertyDTO, "id" | "createdAt" | "updatedAt">);
 
   const handleSubmitProperty = () => {
     if (form.state && form.pinCode.length === 6 && !isPincodeValidForState(form.pinCode, form.state)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
+      return;
+    }
+    if (useRealApi) {
+      const req = buildPropertyRequest();
+      if (editingId) {
+        const afterSave = () => {
+          toastSuccess("Updated");
+          refetchOwnerProperties();
+          setForm({ ...EMPTY_PROPERTY_FORM });
+          setPropertyImageFiles([]);
+          setEditingId(null);
+          setPropertyDialogOpen(null);
+          setActiveTab("assets");
+        };
+        if (propertyImageFiles.length > 0) {
+          updatePropertyWithImages(editingId, req, propertyImageFiles).then(afterSave).catch((err) =>
+            toastError("Update failed", (err as Error)?.message)
+          );
+        } else {
+          apiUpdateProperty(editingId, req).then(afterSave).catch((err) =>
+            toastError("Update failed", (err as Error)?.message)
+          );
+        }
+      } else {
+        const afterCreate = () => {
+          toastSuccess("Created — pending approval");
+          refetchOwnerProperties();
+          setForm({ ...EMPTY_PROPERTY_FORM });
+          setPropertyImageFiles([]);
+          setEditingId(null);
+          setPropertyDialogOpen(null);
+          setActiveTab("assets");
+        };
+        if (propertyImageFiles.length > 0) {
+          createPropertyWithImages(req, propertyImageFiles).then(afterCreate).catch((err) =>
+            toastError("Create failed", (err as Error)?.message)
+          );
+        } else {
+          apiCreateProperty(req).then(afterCreate).catch((err) =>
+            toastError("Create failed", (err as Error)?.message)
+          );
+        }
+      }
       return;
     }
     const payload = buildPropertyPayload();
     if (editingId) {
       updateProperty(editingId, payload);
-      toast({ title: "Updated" });
+      toastSuccess("Updated");
     } else {
       addProperty(payload);
-      toast({ title: "Created — pending approval" });
+      toastSuccess("Created — pending approval");
     }
-    setForm({ ...emptyForm });
+    setForm({ ...EMPTY_PROPERTY_FORM });
+    setPropertyImageFiles([]);
     setEditingId(null);
     setPropertyDialogOpen(null);
     setActiveTab("assets");
   };
 
-  const handleBookingAction = (id: number, status: "APPROVED" | "REJECTED") => { updateBookingStatus(id, status); toast({ title: `Booking ${status.toLowerCase()}` }); };
+  const handleBookingAction = (id: number, status: "APPROVED" | "REJECTED") => { updateBookingStatus(id, status); toastSuccess(`Booking ${status.toLowerCase()}`); };
 
   const refetchComplaints = () => {
     if (!useRealApi) return;
@@ -519,7 +570,7 @@ const OwnerDashboard = () => {
   const handleRaiseComplaint = () => {
     if (useRealApi) {
       if (!complaintForm.title?.trim() || !complaintForm.propertyId) {
-        toast({ title: "Missing fields", description: "Property and subject are required.", variant: "destructive" });
+        toastError("Missing fields", "Property and subject are required.");
         return;
       }
       createComplaint({
@@ -530,18 +581,18 @@ const OwnerDashboard = () => {
         ...(complaintForm.relatedUserId > 0 && { relatedUserId: complaintForm.relatedUserId }),
       })
         .then(() => {
-          toast({ title: "Complaint raised", description: "Your complaint has been submitted." });
+          toastSuccess("Complaint raised", "Your complaint has been submitted.");
           setComplaintDialog(false);
           setComplaintForm({ title: "", description: "", againstUser: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" });
           refetchComplaints();
         })
-        .catch((err) => toast({ title: "Failed to raise complaint", description: (err as Error)?.message, variant: "destructive" }));
+        .catch((err) => toastError("Failed to raise complaint", (err as Error)?.message));
       return;
     }
     if (!complaintForm.title || !complaintForm.propertyId) return;
     const prop = properties.find(p => p.id === complaintForm.propertyId);
     raiseComplaint({ title: complaintForm.title, description: complaintForm.description, raisedBy: currentOwner, raisedByRole: "OWNER", againstUser: complaintForm.againstUser || "tenant", againstRole: "TENANT", propertyId: complaintForm.propertyId, propertyTitle: prop?.title || "", priority: complaintForm.priority });
-    toast({ title: "Complaint raised" }); setComplaintDialog(false);
+    toastSuccess("Complaint raised"); setComplaintDialog(false);
     setComplaintForm({ title: "", description: "", againstUser: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" });
   };
 
@@ -549,16 +600,16 @@ const OwnerDashboard = () => {
     if (useRealApi) {
       resolveComplaint(resolveDialog.id, resolveNote || `Resolved by ${currentOwner}`)
         .then(() => {
-          toast({ title: "Complaint resolved" });
+          toastSuccess("Complaint resolved");
           setResolveDialog({ open: false, id: 0 });
           setResolveNote("");
           refetchComplaints();
         })
-        .catch((err) => toast({ title: "Failed to resolve", description: (err as Error)?.message, variant: "destructive" }));
+        .catch((err) => toastError("Failed to resolve", (err as Error)?.message));
       return;
     }
     updateComplaintStatus(resolveDialog.id, "RESOLVED", resolveNote || `Resolved by ${currentOwner}`);
-    toast({ title: "Complaint resolved" });
+    toastSuccess("Complaint resolved");
     setResolveDialog({ open: false, id: 0 }); setResolveNote("");
   };
 
@@ -592,7 +643,7 @@ const OwnerDashboard = () => {
 
   const handleUpdateOwnerProfile = () => {
     if (ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
@@ -612,7 +663,7 @@ const OwnerDashboard = () => {
         district: ownerProfileForm.district?.trim() || "",
         pincode: ownerProfileForm.pincode?.trim() || "",
       });
-      toast({ title: "Profile updated", description: "Click the Verify badge to submit for review." });
+      toastSuccess("Profile updated", "Click the Verify badge to submit for review.");
       setProfileUpdateDialogOpen(false);
       setProfileUpdatedAfterLoad(true);
       return;
@@ -623,17 +674,17 @@ const OwnerDashboard = () => {
         const data = (res as { data?: ProfileDTO }).data;
         if (data) setApiProfile(data);
         setProfileUpdatedAfterLoad(true);
-        toast({ title: "Profile updated" });
+        toastSuccess("Profile updated");
         setProfileUpdateDialogOpen(false);
         fetchProfileFromDb();
       })
-      .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Update failed", err?.message))
       .finally(() => setUpdatingProfile(false));
   };
 
   const handleSubmitOwnerProfileForReview = () => {
     if (ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
@@ -653,7 +704,7 @@ const OwnerDashboard = () => {
         district: ownerProfileForm.district?.trim() || "",
         pincode: ownerProfileForm.pincode?.trim() || "",
       });
-      toast({ title: "Profile submitted for review", description: "Your profile will be reviewed by admin." });
+      toastSuccess("Profile submitted for review", "Your profile will be reviewed by admin.");
       setProfileSubmitDialogOpen(false);
       return;
     }
@@ -663,11 +714,11 @@ const OwnerDashboard = () => {
         const data = (res as { data?: ProfileDTO }).data;
         if (data) setApiProfile(data);
         setProfileUpdatedAfterLoad(false);
-        toast({ title: "Profile submitted for review", description: "Your profile will be reviewed by admin." });
+        toastSuccess("Profile submitted for review", "Your profile will be reviewed by admin.");
         setProfileSubmitDialogOpen(false);
         fetchProfileFromDb();
       })
-      .catch((err) => toast({ title: "Submission failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Submission failed", err?.message))
       .finally(() => setSubmittingProfile(false));
   };
 
@@ -695,15 +746,20 @@ const OwnerDashboard = () => {
             <span><strong>Demo Mode</strong> — Viewing as <strong>{currentOwner}</strong></span>
           </div>
         )}
-        {!ownerProfileApproved && (
-          <div className="mb-4 p-3 bg-amber-500/20 border border-amber-500/50 rounded-xl flex items-center justify-between gap-2 text-sm text-amber-900 dark:text-amber-200 flex-wrap">
-            <span className="flex items-center gap-2">
-              <AlertCircle className="h-4 w-4 shrink-0" />
+        {!ownerProfileApproved && !ownerPendingApprovalBannerDismissed && (
+          <div className="mb-4 p-3 bg-amber-500/20 border border-amber-500/50 rounded-xl flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span className="min-w-0 flex-1">
               Your profile is pending approval. You cannot add properties until an admin approves your profile.
             </span>
-            <Button size="sm" variant="outline" className="border-amber-600 text-amber-800 dark:text-amber-200 shrink-0" asChild>
-              <Link to="/owner/profile">Complete profile</Link>
-            </Button>
+            <button
+              type="button"
+              aria-label="Dismiss"
+              onClick={() => setOwnerPendingApprovalBannerDismissed(true)}
+              className="shrink-0 rounded-md p-1.5 text-amber-800 hover:bg-amber-500/25 dark:text-amber-200 dark:hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
         )}
 
@@ -774,6 +830,24 @@ const OwnerDashboard = () => {
               </>
             )}
 
+            {activeTab === "add-property" && (
+              <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md p-6">
+                <div className="flex flex-col items-center justify-center gap-4 py-8">
+                  <div className="h-14 w-14 rounded-xl bg-sky-100 dark:bg-sky-900/30 flex items-center justify-center">
+                    <Plus className="h-7 w-7 text-sky-600 dark:text-sky-400" />
+                  </div>
+                  <h2 className="text-xl font-bold text-foreground">Add a new property</h2>
+                  <p className="text-sm text-muted-foreground text-center max-w-md">List your property with title, description, address, and media. New listings are set to PENDING until admin approval.</p>
+                  <Button
+                    onClick={() => ownerProfileApproved ? openPropertyAdd() : toastError("Profile approval required")}
+                    className="gap-2"
+                  >
+                    <Plus className="h-4 w-4" /> Add property
+                  </Button>
+                </div>
+              </div>
+            )}
+
             {activeTab === "assets" && (
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
@@ -807,7 +881,7 @@ const OwnerDashboard = () => {
                       <button
                         type="button"
                         disabled={!ownerProfileApproved}
-                        onClick={() => ownerProfileApproved ? openPropertyAdd() : toast({ title: "Profile approval required", variant: "destructive" })}
+                        onClick={() => ownerProfileApproved ? openPropertyAdd() : toastError("Profile approval required")}
                         className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors"
                       >
                         <Plus className="h-3.5 w-3.5" /> Add property
@@ -823,7 +897,7 @@ const OwnerDashboard = () => {
                     <button
                       type="button"
                       disabled={!ownerProfileApproved}
-                      onClick={() => ownerProfileApproved ? openPropertyAdd() : toast({ title: "Profile approval required", variant: "destructive" })}
+                      onClick={() => ownerProfileApproved ? openPropertyAdd() : toastError("Profile approval required")}
                       className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors"
                     >
                       <Plus className="h-3.5 w-3.5" /> Add property
@@ -963,18 +1037,18 @@ const OwnerDashboard = () => {
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                   <div className="flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
                           <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <h2 className="text-lg font-bold text-foreground">My Complaints</h2>
                           <p className="text-xs text-muted-foreground">View and manage complaints. Click a row to open details.</p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 w-full">
                       <StatusFilterDropdown value={complaintStatusFilter} onChange={setComplaintStatusFilter} />
                       <button
                         type="button"
@@ -1037,8 +1111,8 @@ const OwnerDashboard = () => {
                             ) : c.status === "OPEN" ? (
                               <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">{c.status}</span>
                             ) : c.status === "IN_PROGRESS" ? (
-                              <span className="inline-flex items-center gap-1 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
-                                <Clock className="h-3.5 w-3.5" /> In progress
+                              <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                                <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
                               </span>
                             ) : (
                               <Badge variant="outline" className="text-[10px]">{c.status}</Badge>
@@ -1240,8 +1314,7 @@ const OwnerDashboard = () => {
                               </div>
                             ) : (
                               <div className="rounded-xl border border-dashed border-slate-300 dark:border-slate-600 bg-slate-50/50 dark:bg-slate-800/20 p-8 text-center">
-                                <p className="text-sm text-muted-foreground mb-2">No profile details yet.</p>
-                                <Button size="sm" asChild><Link to="/owner/profile">Complete profile</Link></Button>
+                                <p className="text-sm text-muted-foreground">No profile details yet. Use <strong>Update profile</strong> (via the Verify badge) to add your information.</p>
                               </div>
                             )}
                           </div>
@@ -1261,384 +1334,114 @@ const OwnerDashboard = () => {
         </div>
       </div>
 
-      {/* Add/Edit Property Dialog — same structure as Admin Dashboard */}
-      <Dialog open={propertyDialogOpen !== null} onOpenChange={(open) => { if (!open) { setPropertyDialogOpen(null); setEditingId(null); } }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{propertyDialogOpen === "add" ? "Add Property" : "Edit Property"}</DialogTitle>
-            <p className="text-xs text-muted-foreground mt-1">Fields marked with <span className="text-destructive">*</span> are required. New listings are set to <strong>PENDING</strong>; admin can approve or reject.</p>
-          </DialogHeader>
-          <div className="grid gap-6 py-2">
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Basic details</p>
-              <div className="grid gap-3">
-                <div className="grid gap-2">
-                  <Label>Title <span className="text-destructive">*</span></Label>
-                  <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Property title" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Description <span className="text-destructive">*</span> <span className="text-muted-foreground font-normal">({form.description.length} / {DESCRIPTION_MAX_LENGTH})</span></Label>
-                  <Textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value.slice(0, DESCRIPTION_MAX_LENGTH) }))} placeholder="Describe the property" rows={3} maxLength={DESCRIPTION_MAX_LENGTH} />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Type <span className="text-destructive">*</span></Label>
-                    <Select value={form.propertyType} onValueChange={(v) => setForm((f) => ({ ...f, propertyType: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Type" /></SelectTrigger>
-                      <SelectContent>{propertyTypes.map((t) => <SelectItem key={t} value={t}>{t.replace(/_/g, " ")}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Price (₹/month) <span className="text-destructive">*</span></Label>
-                    <Input type="number" min={0} value={form.price || ""} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value ? Number(e.target.value) : 0 }))} placeholder="e.g. 25000" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Specifications</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                <div className="grid gap-2">
-                  <Label>Bedrooms</Label>
-                  <Input type="number" min={0} value={form.bedrooms ?? ""} onChange={(e) => setForm((f) => ({ ...f, bedrooms: e.target.value ? Number(e.target.value) : null }))} placeholder="—" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Bathrooms</Label>
-                  <Input type="number" min={0} value={form.bathrooms ?? ""} onChange={(e) => setForm((f) => ({ ...f, bathrooms: e.target.value ? Number(e.target.value) : null }))} placeholder="—" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Area (sq ft)</Label>
-                  <Input type="number" min={0} value={form.area ?? ""} onChange={(e) => setForm((f) => ({ ...f, area: e.target.value ? Number(e.target.value) : null }))} placeholder="—" />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Furnishing</Label>
-                  <Select value={form.furnishing ?? ""} onValueChange={(v) => setForm((f) => ({ ...f, furnishing: v || null }))}>
-                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="FURNISHED">Furnished</SelectItem>
-                      <SelectItem value="SEMI_FURNISHED">Semi Furnished</SelectItem>
-                      <SelectItem value="UNFURNISHED">Unfurnished</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid gap-2">
-                <Label>Amenities</Label>
-                <p className="text-xs text-muted-foreground">Select or add amenities.</p>
-                <div className="flex flex-wrap gap-2">
-                  {COMMON_AMENITIES.map((a) => {
-                    const selected = Array.isArray(form.amenities) && form.amenities.includes(a);
-                    return (
-                      <button
-                        key={a}
-                        type="button"
-                        onClick={() => setForm((f) => ({
-                          ...f,
-                          amenities: selected ? (f.amenities ?? []).filter((x) => x !== a) : [...(f.amenities ?? []), a],
-                        }))}
-                        className={`rounded-full px-3 py-1.5 text-xs font-medium border transition-colors ${selected ? "bg-sky-600 text-white border-sky-600 dark:bg-sky-500 dark:border-sky-500" : "bg-muted/50 border-slate-200 dark:border-slate-700 hover:bg-muted"}`}
-                      >
-                        {a}
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap gap-2 mt-1">
-                  {(form.amenities ?? []).filter((a) => !COMMON_AMENITIES.includes(a)).map((a) => (
-                    <span key={a} className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs">
-                      {a}
-                      <button type="button" onClick={() => setForm((f) => ({ ...f, amenities: (f.amenities ?? []).filter((x) => x !== a) }))} className="hover:text-destructive" aria-label="Remove">×</button>
-                    </span>
-                  ))}
-                  <input
-                    type="text"
-                    placeholder="Add custom (e.g. Pet friendly)"
-                    className="flex-1 min-w-[120px] rounded-md border border-input bg-background px-2.5 py-1.5 text-xs"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === ",") {
-                        e.preventDefault();
-                        const v = (e.target as HTMLInputElement).value.trim();
-                        if (v && !(form.amenities ?? []).includes(v)) setForm((f) => ({ ...f, amenities: [...(f.amenities ?? []), v] }));
-                        (e.target as HTMLInputElement).value = "";
-                      }
-                    }}
-                    onBlur={(e) => {
-                      const v = e.target.value.trim();
-                      if (v && !(form.amenities ?? []).includes(v)) { setForm((f) => ({ ...f, amenities: [...(f.amenities ?? []), v] })); e.target.value = ""; }
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Location</p>
-              <div className="grid gap-3">
-                <div className="grid gap-2">
-                  <Label>Address <span className="text-destructive">*</span></Label>
-                  <Input value={form.address} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} placeholder="Street address" />
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <div className="grid gap-1.5">
-                    <Label>State <span className="text-destructive">*</span></Label>
-                    <Select value={form.state || "_"} onValueChange={(v) => setForm((f) => ({ ...f, state: v === "_" ? "" : v, city: "", pinCode: "" }))}>
-                      <SelectTrigger className="h-9 w-full"><SelectValue placeholder="Select state" /></SelectTrigger>
-                      <SelectContent><SelectItem value="_">Select state</SelectItem>{indianStates.map((s) => <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>)}</SelectContent>
-                    </Select>
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label>City <span className="text-destructive">*</span></Label>
-                    {formCities.length > 0 ? (
-                      <Select value={form.city} onValueChange={(v) => setForm((f) => ({ ...f, city: v }))}>
-                        <SelectTrigger className="h-9 w-full"><SelectValue placeholder="Select City" /></SelectTrigger>
-                        <SelectContent className="max-h-60">{formCities.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                      </Select>
-                    ) : (
-                      <Input className="h-9 w-full" value={form.city} onChange={(e) => setForm((f) => ({ ...f, city: e.target.value }))} placeholder="e.g. Bengaluru" />
-                    )}
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label>Pin code <span className="text-destructive">*</span></Label>
-                    <div className="space-y-1">
-                      <div className="relative">
-                        <Input
-                          className={`h-9 w-full ${form.pinCode.length === 6 && form.state && isPincodeValidForState(form.pinCode, form.state) ? "pr-8" : ""}`}
-                          value={form.pinCode}
-                          onChange={(e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 6); setForm((f) => ({ ...f, pinCode: v })); }}
-                          placeholder="6 digits"
-                          maxLength={6}
-                          inputMode="numeric"
-                        />
-                        {form.pinCode.length === 6 && form.state && isPincodeValidForState(form.pinCode, form.state) && (
-                          <span className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-green-600" aria-hidden><Check className="h-4 w-4" strokeWidth={2.5} /></span>
-                        )}
-                      </div>
-                      {form.pinCode.length > 0 && form.pinCode.length !== 6 && <p className="text-[10px] text-muted-foreground">Enter exactly 6 digits</p>}
-                      {form.pinCode.length === 6 && form.state && !isPincodeValidForState(form.pinCode, form.state) && <p className="text-[10px] text-destructive">This pin code does not belong to the selected state.</p>}
-                    </div>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2"><Label>Latitude</Label><Input type="number" step="any" value={form.latitude ?? ""} onChange={(e) => setForm((f) => ({ ...f, latitude: e.target.value ? Number(e.target.value) : null }))} placeholder="—" /></div>
-                  <div className="grid gap-2"><Label>Longitude</Label><Input type="number" step="any" value={form.longitude ?? ""} onChange={(e) => setForm((f) => ({ ...f, longitude: e.target.value ? Number(e.target.value) : null }))} placeholder="—" /></div>
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-sm font-medium text-foreground border-b border-border/50 pb-1">Media</p>
-              <div className="grid gap-2">
-                <Label>Image URLs (one per line)</Label>
-                <Textarea value={Array.isArray(form.images) ? form.images.join("\n") : ""} onChange={(e) => setForm((f) => ({ ...f, images: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) }))} placeholder="https://..." rows={3} />
-              </div>
-            </div>
+      {/* Add/Edit Property — same dialog shell as profile */}
+      <Dialog open={propertyDialogOpen !== null} onOpenChange={(open) => { if (!open) { setPropertyDialogOpen(null); setEditingId(null); setPropertyImageFiles([]); } }}>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] min-h-0 w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-xl font-semibold tracking-tight">{propertyDialogOpen === "add" ? "Add property" : "Edit property"}</DialogTitle>
+            </DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">
+              Fields marked <span className="text-destructive">*</span> are required. New listings are <strong>PENDING</strong> until admin approves.
+            </p>
           </div>
-          <DialogFooter className="gap-2 sm:gap-0 pt-2">
-            <Button variant="outline" onClick={() => { setPropertyDialogOpen(null); setEditingId(null); }}>Cancel</Button>
-            <Button
-              onClick={() => openConfirm(editingId ? "Update property?" : "Create property?", editingId ? `Save changes to "${form.title}"?` : "This will add a new property listing. Status will be PENDING until admin approves.", editingId ? "Update" : "Create", "default", handleSubmitProperty)}
-              disabled={!form.title?.trim() || !form.description?.trim() || !form.price || !form.address?.trim() || !form.city?.trim() || !form.state || !/^\d{6}$/.test((form.pinCode ?? "").trim())}
-            >
-              {propertyDialogOpen === "add" ? "Create" : "Update"}
-            </Button>
-          </DialogFooter>
+          {/* max-h: dialog cap minus header + footer — avoids 1fr stretching empty space below short forms (e.g. after file pick) */}
+          <div className="min-h-0 min-w-0 max-h-[calc(min(92vh,760px)_-_13.5rem)] overflow-y-auto overscroll-contain bg-background px-5 py-4 scroll-smooth sm:px-7">
+            <ThemeProvider theme={ownerProfileMuiTheme}>
+              <div className="min-h-0 min-w-0">
+              <PropertyFormMuiFields
+                form={form}
+                setForm={setForm}
+                stateMode="code"
+                hideLatLong
+                uploadedFiles={useRealApi ? propertyImageFiles : []}
+                onUploadedFilesChange={useRealApi ? setPropertyImageFiles : undefined}
+              />
+              </div>
+            </ThemeProvider>
+          </div>
+          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => { setPropertyDialogOpen(null); setEditingId(null); setPropertyImageFiles([]); }}>Cancel</Button>
+              <Button
+                type="button"
+                className="min-h-10 w-full sm:w-auto"
+                onClick={() => openConfirm(editingId ? "Update property?" : "Create property?", editingId ? `Save changes to "${form.title}"?` : "This will add a new property listing. Status will be PENDING until admin approves.", editingId ? "Update" : "Create", "default", handleSubmitProperty)}
+                disabled={!isPropertyFormValid(form)}
+              >
+                {propertyDialogOpen === "add" ? "Create" : "Update"}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Update profile dialog (owner) — same form as Owner Profile Setup */}
       <Dialog open={profileUpdateDialogOpen} onOpenChange={(open) => { setProfileUpdateDialogOpen(open); if (!open) setOwnerProfileForm({ fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", email: "", village: "", postOffice: "", policeStation: "", state: "", district: "", pincode: "" }); }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
-          <DialogHeader><DialogTitle>Update profile</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Update your details. Use &quot;Submit for verification&quot; when you want admin to review.</p>
-          <form className="space-y-6 py-3" onSubmit={(e) => { e.preventDefault(); openConfirm("Save profile?", "Your changes will be saved. Click the Verify badge to submit for review.", "Save", "default", () => handleUpdateOwnerProfile()); }}>
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><User className="h-4 w-4 text-primary" /> Personal Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="sm:col-span-2 space-y-1.5">
-                  <Label>Full name <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.fullName} onChange={e => setOwnerProfileForm(f => ({ ...f, fullName: e.target.value }))} placeholder="e.g. Rajesh Kumar" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Gender <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.gender} onValueChange={v => setOwnerProfileForm(f => ({ ...f, gender: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="Male">Male</SelectItem><SelectItem value="Female">Female</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <DatePickerSelects
-                    label="Date of birth *"
-                    value={ownerProfileForm.dateOfBirth}
-                    onChange={(v) => setOwnerProfileForm(f => ({ ...f, dateOfBirth: v }))}
-                    maxDate={new Date()}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Aadhar No <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.aadharNumber} onChange={e => setOwnerProfileForm(f => ({ ...f, aadharNumber: e.target.value.replace(/\D/g, "").slice(0, 12) }))} placeholder="e.g. 123456789012" maxLength={12} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Mobile <span className="text-destructive">*</span></Label>
-                  <MobileInput hideLabel value={ownerProfileForm.mobile} onChange={v => setOwnerProfileForm(f => ({ ...f, mobile: v }))} placeholder="9876543210" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Email <span className="text-destructive">*</span></Label>
-                  <Input type="email" value={ownerProfileForm.email} onChange={e => setOwnerProfileForm(f => ({ ...f, email: e.target.value }))} placeholder="e.g. rajesh@email.com" className="max-w-xs" />
-                </div>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /> Address Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>State <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.state} onValueChange={v => setOwnerProfileForm(f => ({ ...f, state: v, district: "", pincode: "" }))}>
-                    <SelectTrigger><SelectValue placeholder="Select State" /></SelectTrigger>
-                    <SelectContent className="max-h-60">{indianStates.map(s => <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>District <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.district} onValueChange={v => setOwnerProfileForm(f => ({ ...f, district: v }))} disabled={!ownerProfileForm.state}>
-                    <SelectTrigger><SelectValue placeholder={ownerProfileForm.state ? "Select District" : "Select state first"} /></SelectTrigger>
-                    <SelectContent className="max-h-60">{(indianStates.find(s => s.code === ownerProfileForm.state)?.districts ?? []).map(d => <SelectItem key={d.code} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Pin code <span className="text-destructive">*</span></Label>
-                  {statePincodeRanges[ownerProfileForm.state]?.samples?.length ? (
-                    <Select value={ownerProfileForm.pincode} onValueChange={v => setOwnerProfileForm(f => ({ ...f, pincode: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select Pin Code" /></SelectTrigger>
-                      <SelectContent>{(statePincodeRanges[ownerProfileForm.state]?.samples ?? []).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <>
-                      <Input placeholder="e.g. 560001" maxLength={6} value={ownerProfileForm.pincode} onChange={e => setOwnerProfileForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) }))} className={ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state) ? "border-destructive" : ""} />
-                      {ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state) && <p className="text-xs text-destructive">Pin code does not belong to selected state</p>}
-                    </>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Village / Town / Locality <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.village} onChange={e => setOwnerProfileForm(f => ({ ...f, village: e.target.value }))} placeholder="e.g. Gandhi Nagar" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Post office <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.postOffice} onChange={e => setOwnerProfileForm(f => ({ ...f, postOffice: e.target.value }))} placeholder="e.g. Sadar Post Office" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Police station <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.policeStation} onChange={e => setOwnerProfileForm(f => ({ ...f, policeStation: e.target.value }))} placeholder="e.g. Kotwali" />
-                </div>
-              </div>
-            </div>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Update profile</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Update your details. Use &quot;Submit for verification&quot; when you want admin to review.</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button type="button" variant="outline" onClick={() => setProfileUpdateDialogOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={updatingProfile}>{(updatingProfile ? "Saving..." : "Save")}</Button>
-          </DialogFooter>
+          <form
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            onSubmit={(e) => { e.preventDefault(); openConfirm("Save profile?", "Your changes will be saved. Click the Verify badge to submit for review.", "Save", "default", () => handleUpdateOwnerProfile()); }}
+          >
+            <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+              <ThemeProvider theme={ownerProfileMuiTheme}>
+                <OwnerProfileMuiForm form={ownerProfileForm} setForm={setOwnerProfileForm} />
+              </ThemeProvider>
+            </div>
+            <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+              <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setProfileUpdateDialogOpen(false)}>Cancel</Button>
+                <Button type="submit" className="min-h-10 w-full sm:w-auto" disabled={updatingProfile}>{(updatingProfile ? "Saving..." : "Save")}</Button>
+              </DialogFooter>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
 
       {/* Submit profile for verification (owner) */}
       <Dialog open={profileSubmitDialogOpen} onOpenChange={(open) => { setProfileSubmitDialogOpen(open); if (!open) setOwnerProfileForm({ fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", email: "", village: "", postOffice: "", policeStation: "", state: "", district: "", pincode: "" }); }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
-          <DialogHeader><DialogTitle>{apiProfile ? "Submit for verification" : "Owner Profile Setup"}</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">{apiProfile ? "Submit your profile for admin review." : "Complete your profile to get verified."}</p>
-          <form className="space-y-6 py-3" onSubmit={(e) => { e.preventDefault(); openConfirm("Submit for review?", "Your profile will be sent for admin verification.", "Submit", "default", () => handleSubmitOwnerProfileForReview()); }}>
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><User className="h-4 w-4 text-primary" /> Personal Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="sm:col-span-2 space-y-1.5">
-                  <Label>Full name <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.fullName} onChange={e => setOwnerProfileForm(f => ({ ...f, fullName: e.target.value }))} placeholder="e.g. Rajesh Kumar" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Gender <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.gender} onValueChange={v => setOwnerProfileForm(f => ({ ...f, gender: v }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="Male">Male</SelectItem><SelectItem value="Female">Female</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <DatePickerSelects
-                    label="Date of birth *"
-                    value={ownerProfileForm.dateOfBirth}
-                    onChange={(v) => setOwnerProfileForm(f => ({ ...f, dateOfBirth: v }))}
-                    maxDate={new Date()}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Aadhar No <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.aadharNumber} onChange={e => setOwnerProfileForm(f => ({ ...f, aadharNumber: e.target.value.replace(/\D/g, "").slice(0, 12) }))} placeholder="e.g. 123456789012" maxLength={12} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Mobile <span className="text-destructive">*</span></Label>
-                  <MobileInput hideLabel value={ownerProfileForm.mobile} onChange={v => setOwnerProfileForm(f => ({ ...f, mobile: v }))} placeholder="9876543210" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Email <span className="text-destructive">*</span></Label>
-                  <Input type="email" value={ownerProfileForm.email} onChange={e => setOwnerProfileForm(f => ({ ...f, email: e.target.value }))} placeholder="e.g. rajesh@email.com" className="max-w-xs" />
-                </div>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /> Address Details</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label>State <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.state} onValueChange={v => setOwnerProfileForm(f => ({ ...f, state: v, district: "", pincode: "" }))}>
-                    <SelectTrigger><SelectValue placeholder="Select State" /></SelectTrigger>
-                    <SelectContent className="max-h-60">{indianStates.map(s => <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>District <span className="text-destructive">*</span></Label>
-                  <Select value={ownerProfileForm.district} onValueChange={v => setOwnerProfileForm(f => ({ ...f, district: v }))} disabled={!ownerProfileForm.state}>
-                    <SelectTrigger><SelectValue placeholder={ownerProfileForm.state ? "Select District" : "Select state first"} /></SelectTrigger>
-                    <SelectContent className="max-h-60">{(indianStates.find(s => s.code === ownerProfileForm.state)?.districts ?? []).map(d => <SelectItem key={d.code} value={d.name}>{d.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Pin code <span className="text-destructive">*</span></Label>
-                  {statePincodeRanges[ownerProfileForm.state]?.samples?.length ? (
-                    <Select value={ownerProfileForm.pincode} onValueChange={v => setOwnerProfileForm(f => ({ ...f, pincode: v }))}>
-                      <SelectTrigger><SelectValue placeholder="Select Pin Code" /></SelectTrigger>
-                      <SelectContent>{(statePincodeRanges[ownerProfileForm.state]?.samples ?? []).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <>
-                      <Input placeholder="e.g. 560001" maxLength={6} value={ownerProfileForm.pincode} onChange={e => setOwnerProfileForm(f => ({ ...f, pincode: e.target.value.replace(/\D/g, "").slice(0, 6) }))} className={ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state) ? "border-destructive" : ""} />
-                      {ownerProfileForm.state && ownerProfileForm.pincode.length === 6 && !isPincodeValidForState(ownerProfileForm.pincode, ownerProfileForm.state) && <p className="text-xs text-destructive">Pin code does not belong to selected state</p>}
-                    </>
-                  )}
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Village / Town / Locality <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.village} onChange={e => setOwnerProfileForm(f => ({ ...f, village: e.target.value }))} placeholder="e.g. Gandhi Nagar" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Post office <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.postOffice} onChange={e => setOwnerProfileForm(f => ({ ...f, postOffice: e.target.value }))} placeholder="e.g. Sadar Post Office" />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Police station <span className="text-destructive">*</span></Label>
-                  <Input value={ownerProfileForm.policeStation} onChange={e => setOwnerProfileForm(f => ({ ...f, policeStation: e.target.value }))} placeholder="e.g. Kotwali" />
-                </div>
-              </div>
-            </div>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">{apiProfile ? "Submit for verification" : "Owner Profile Setup"}</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">{apiProfile ? "Submit your profile for admin review." : "Complete your profile to get verified."}</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button type="button" variant="outline" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
-            <Button type="submit" disabled={submittingProfile}>
-              <FileText className="h-4 w-4 mr-2" />
-              {submittingProfile ? "Submitting..." : "Submit for Admin Review"}
-            </Button>
-          </DialogFooter>
+          <form
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            onSubmit={(e) => { e.preventDefault(); openConfirm("Submit for review?", "Your profile will be sent for admin verification.", "Submit", "default", () => handleSubmitOwnerProfileForReview()); }}
+          >
+            <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+              <ThemeProvider theme={ownerProfileMuiTheme}>
+                <OwnerProfileMuiForm form={ownerProfileForm} setForm={setOwnerProfileForm} />
+              </ThemeProvider>
+            </div>
+            <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+              <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
+                <Button type="submit" className="min-h-10 w-full sm:w-auto" disabled={submittingProfile}>
+                  <FileText className="h-4 w-4 mr-2" />
+                  {submittingProfile ? "Submitting..." : "Submit for Admin Review"}
+                </Button>
+              </DialogFooter>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
@@ -1693,8 +1496,8 @@ const OwnerDashboard = () => {
                           {c.status}
                         </span>
                       ) : c.status === "IN_PROGRESS" ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 mt-0.5">
-                          <Clock className="h-3.5 w-3.5 inline" /> In progress
+                        <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 mt-0.5">
+                          <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
                         </span>
                       ) : (
                         <Badge variant="outline" className={`${statusCls} mt-0.5`}>{c.status}</Badge>
@@ -1721,7 +1524,7 @@ const OwnerDashboard = () => {
                 {useRealApi && (
                   <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</p>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 w-full">
                       <Select
                         value={c.status}
                         onValueChange={(v) => {
@@ -1730,11 +1533,11 @@ const OwnerDashboard = () => {
                         }}
                         disabled={complaintStatusUpdating}
                       >
-                        <SelectTrigger className="min-w-[152px] w-[152px] h-8 text-xs rounded-md border-violet-500/50 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20 focus:ring-violet-500/50 focus:ring-offset-0 pl-2.5">
-                          <span className="flex items-center gap-1.5">
-                            <Clock className="h-3.5 w-3.5 shrink-0" />
-                            <SelectValue placeholder="Status" />
-                          </span>
+                        <SelectTrigger className="min-w-[168px] max-w-full h-8 gap-2 text-xs rounded-md border-violet-500/50 text-violet-600 dark:text-violet-400 bg-transparent hover:bg-violet-50 dark:hover:bg-violet-900/20 focus:ring-violet-500/50 focus:ring-offset-0 pl-2.5 pr-2 [&>span]:line-clamp-none shrink-0">
+                          <div className="flex min-w-0 flex-1 flex-row items-center gap-1.5 overflow-hidden">
+                            <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                            <SelectValue placeholder="Status" className="min-w-0 flex-1 truncate whitespace-nowrap text-left leading-none" />
+                          </div>
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="OPEN" className="text-rose-700 dark:text-rose-300 focus:bg-rose-50 focus:text-rose-800 dark:focus:bg-rose-900/30 dark:focus:text-rose-200">OPEN</SelectItem>
@@ -1802,46 +1605,55 @@ const OwnerDashboard = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Complaint Dialog */}
+      {/* Raise complaint — same dialog shell as profile / property */}
       <Dialog open={complaintDialog} onOpenChange={(open) => { if (!open) setComplaintForm({ title: "", description: "", againstUser: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" }); setComplaintDialog(open); }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
-          <DialogHeader><DialogTitle>Raise a Complaint</DialogTitle></DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-2"><Label>Property</Label><Select value={complaintForm.propertyId?.toString() || ""} onValueChange={v => setComplaintForm(f => ({ ...f, propertyId: +v, relatedUserId: 0 }))}><SelectTrigger><SelectValue placeholder="Select property" /></SelectTrigger><SelectContent>{myProperties.map(p => <SelectItem key={p.id} value={p.id.toString()}>{p.title}</SelectItem>)}</SelectContent></Select></div>
-            {useRealApi ? (
-              <div className="space-y-2">
-                <Label>Against (optional)</Label>
-                <Select
-                  value={complaintForm.relatedUserId && complaintForm.relatedUserId > 0 ? String(complaintForm.relatedUserId) : COMPLAINT_NONE_VALUE}
-                  onValueChange={(v) => setComplaintForm((f) => ({ ...f, relatedUserId: v === COMPLAINT_NONE_VALUE ? 0 : Number(v) }))}
-                  disabled={againstOptionsLoading || !complaintForm.propertyId}
-                >
-                  <SelectTrigger><SelectValue placeholder={againstOptionsLoading ? "Loading…" : complaintForm.propertyId ? "Select someone (optional)" : "Select a property first"} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value={COMPLAINT_NONE_VALUE}>— None —</SelectItem>
-                    {againstOptions.map((o) => <SelectItem key={o.userId} value={o.userId.toString()}>{o.userName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {complaintForm.propertyId && !againstOptionsLoading && againstOptions.length === 0 && <p className="text-xs text-muted-foreground">No one associated with this property to select.</p>}
-              </div>
-            ) : (
-              <div className="space-y-2"><Label>Against (optional)</Label><Input value={complaintForm.againstUser} onChange={e => setComplaintForm(f => ({ ...f, againstUser: e.target.value }))} placeholder="e.g. username (optional)" /></div>
-            )}
-            <div className="space-y-2"><Label>Subject</Label><Input value={complaintForm.title} onChange={e => setComplaintForm(f => ({ ...f, title: e.target.value }))} placeholder="Brief description of the issue" /></div>
-            <div className="space-y-2"><Label>Description</Label><Textarea value={complaintForm.description} onChange={e => setComplaintForm(f => ({ ...f, description: e.target.value }))} rows={3} placeholder="Provide details about the complaint..." /></div>
-            <div className="space-y-2"><Label>Priority</Label><Select value={complaintForm.priority} onValueChange={v => setComplaintForm(f => ({ ...f, priority: v as ComplaintPriority }))}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="LOW">Low</SelectItem><SelectItem value="MEDIUM">Medium</SelectItem><SelectItem value="HIGH">High</SelectItem></SelectContent></Select></div>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Raise a complaint</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Describe the issue. You can optionally relate it to someone linked to the property.</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setComplaintDialog(false)}>Cancel</Button>
-            <button
-              type="button"
-              onClick={() => openConfirm("Raise complaint?", "This will submit the complaint for review.", "Submit", "default", handleRaiseComplaint)}
-              disabled={!complaintForm.title?.trim() || !complaintForm.propertyId}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors"
-            >
-              <CheckCircle className="h-3.5 w-3.5" /> Submit
-            </button>
-          </DialogFooter>
+          <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+            <ThemeProvider theme={ownerProfileMuiTheme}>
+              <RaiseComplaintMuiFields
+                properties={myProperties.map((p) => ({ id: p.id, title: p.title }))}
+                propertyId={complaintForm.propertyId}
+                onPropertyId={(id) => setComplaintForm((f) => ({ ...f, propertyId: id, relatedUserId: 0 }))}
+                headline={complaintForm.title}
+                onHeadline={(v) => setComplaintForm((f) => ({ ...f, title: v }))}
+                description={complaintForm.description}
+                onDescription={(v) => setComplaintForm((f) => ({ ...f, description: v }))}
+                priority={complaintForm.priority}
+                onPriority={(v) => setComplaintForm((f) => ({ ...f, priority: v }))}
+                showAgainstSelect={Boolean(useRealApi)}
+                relatedUserId={complaintForm.relatedUserId}
+                onRelatedUserId={(id) => setComplaintForm((f) => ({ ...f, relatedUserId: id }))}
+                againstOptions={againstOptions}
+                againstLoading={againstOptionsLoading}
+                againstNoneValue={COMPLAINT_NONE_VALUE}
+                showDemoAgainstInput={!useRealApi}
+                demoAgainstUser={complaintForm.againstUser}
+                onDemoAgainstUser={!useRealApi ? (v) => setComplaintForm((f) => ({ ...f, againstUser: v })) : undefined}
+              />
+            </ThemeProvider>
+          </div>
+          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setComplaintDialog(false)}>Cancel</Button>
+              <Button
+                type="button"
+                className="min-h-10 w-full sm:w-auto"
+                onClick={() => openConfirm("Raise complaint?", "This will submit the complaint for review.", "Submit", "default", handleRaiseComplaint)}
+                disabled={!complaintForm.title?.trim() || !complaintForm.propertyId}
+              >
+                <CheckCircle className="h-4 w-4 mr-2" /> Submit
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 

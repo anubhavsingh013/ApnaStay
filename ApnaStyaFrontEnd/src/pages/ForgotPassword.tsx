@@ -5,11 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Mail, ArrowLeft, Send } from "lucide-react";
 import { forgotPassword } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import ApnaStayLogo from "@/components/common/ApnaStayLogo";
 
 const ForgotPassword = () => {
-  const { toast } = useToast();
   const [email, setEmail] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
@@ -21,16 +20,9 @@ const ForgotPassword = () => {
     try {
       await forgotPassword(email.trim());
       setSent(true);
-      toast({
-        title: "Check your email",
-        description: "If an account exists for this email, you’ll receive a password reset link.",
-      });
+      toastSuccess("Check your email", "If an account exists for this email, you’ll receive a password reset link.");
     } catch (err: any) {
-      toast({
-        title: "Request failed",
-        description: err?.message || "Could not send reset link. Try again.",
-        variant: "destructive",
-      });
+      toastError("Request failed", err?.message || "Could not send reset link. Try again.");
     } finally {
       setLoading(false);
     }

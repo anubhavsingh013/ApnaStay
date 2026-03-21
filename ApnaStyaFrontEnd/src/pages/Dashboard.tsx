@@ -7,8 +7,12 @@ import PropertyCard from "@/components/property/PropertyCard";
 import { properties as staticProperties } from "@/constants/properties";
 import { useDemoData, type Complaint } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { useToast } from "@/hooks/use-toast";
-import { getProfile, get2faStatus, submitProfileForReview, updateProfile, getProperties as getApiProperties, getComplaints, createComplaint, getUserIdByUsername, getDecodedToken, type ProfileDTO, type PropertyDTO, type ComplaintDTO, type ComplaintPriority, type ComplaintStatus } from "@/lib/api";
+import { toastSuccess, toastError } from "@/lib/app-toast";
+import {
+  getProfile, get2faStatus, submitProfileForReview, updateProfile, getProperties as getApiProperties, getComplaints, createComplaint, getUserIdByUsername, getDecodedToken,
+  getComplaintMessages, sendComplaintMessage,
+  type ProfileDTO, type PropertyDTO, type ComplaintDTO, type ComplaintPriority, type ComplaintStatus, type ComplaintMessageDTO,
+} from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
 import { MobileInput, parseMobileValue, formatMobileForApi } from "@/components/auth/MobileInput";
@@ -16,7 +20,7 @@ import { indianStates, isPincodeValidForState, getCitiesForState, statePincodeRa
 import {
   Heart, CalendarDays, User, Search, Bell, FileText,
   CreditCard, AlertCircle, Plus, IndianRupee, MessageSquare,
-  ChevronRight, Pencil, CheckCircle, Eye, MapPin,
+  ChevronRight, Pencil, CheckCircle, Eye, MapPin, Clock,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -29,8 +33,15 @@ import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
 import { DemoModeLoginPrompt } from "@/features/demo/DemoModeLoginPrompt";
-import { DatePickerInput } from "@/components/common/DatePickerInput";
+import { TenantProfileMuiForm } from "@/components/profile/TenantProfileMuiForm";
+import { RaiseComplaintMuiFields } from "@/components/dashboard/RaiseComplaintMuiFields";
 import { formatDob } from "@/lib/utils";
+import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+
+const tenantProfileMuiTheme = createTheme({
+  palette: { mode: "light", primary: { main: "#0284c7" } },
+});
 
 const TENANTS = ["sneha_tenant"];
 
@@ -56,7 +67,6 @@ const Dashboard = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user, dashboardPath } = useAuth();
-  const { toast } = useToast();
   const { demoMode, properties, bookings, payments, makePayment, complaints, raiseComplaint, notifications, markNotificationRead, getNotificationsFor, isTenantProfileApproved, tenantProfiles, updateTenantProfile, submitTenantProfile } = useDemoData();
   const [activeTab, setActiveTab] = useState("overview");
   const [demoTenant, setDemoTenant] = useState(getDemoUser);
@@ -156,7 +166,7 @@ const Dashboard = () => {
           setProfileError(null);
         } else {
           setProfileError("Could not load profile");
-          toast({ title: "Profile load failed", description: "Please try again later.", variant: "destructive" });
+          toastError("Profile load failed", "Please try again later.");
         }
       })
       .finally(() => setProfileLoading(false));
@@ -267,6 +277,10 @@ const Dashboard = () => {
   const [againstOptions, setAgainstOptions] = useState<{ userId: number; userName: string }[]>([]);
   const [againstOptionsLoading, setAgainstOptionsLoading] = useState(false);
   const [profileForm, setProfileForm] = useState({ email: "", phone: "" });
+  const [detailItem, setDetailItem] = useState<{ type: "complaint"; data: ComplaintDTO | Complaint } | null>(null);
+  const [complaintMessages, setComplaintMessages] = useState<ComplaintMessageDTO[]>([]);
+  const [complaintMessageText, setComplaintMessageText] = useState("");
+  const [complaintMessageSending, setComplaintMessageSending] = useState(false);
 
   const tenantForData = demoMode ? currentTenant : (user?.username ?? currentTenant);
   const tenantProfileApproved = demoMode ? isTenantProfileApproved(tenantForData) : (apiApproved === true || apiProfile?.status === "APPROVED");
@@ -305,14 +319,44 @@ const Dashboard = () => {
   }, [useRealApi, activeTab]);
 
   useEffect(() => {
-    if (!useRealApi || !complaintDialog) return;
+    if (!useRealApi || (!complaintDialog && activeTab !== "complaints")) return;
     getApiProperties()
       .then((res) => {
         const list = (res as { data?: PropertyDTO[] }).data;
         if (Array.isArray(list)) setApiPropertiesForComplaint(list);
       })
       .catch(() => setApiPropertiesForComplaint([]));
-  }, [useRealApi, complaintDialog]);
+  }, [useRealApi, complaintDialog, activeTab]);
+
+  useEffect(() => {
+    if (!detailItem || detailItem.type !== "complaint" || !useRealApi || !("id" in detailItem.data)) return;
+    const id = (detailItem.data as ComplaintDTO).id;
+    getComplaintMessages(id)
+      .then((res) => {
+        const list = (res as { data?: ComplaintMessageDTO[] }).data;
+        if (Array.isArray(list)) setComplaintMessages(list);
+      })
+      .catch(() => setComplaintMessages([]));
+    setComplaintMessageText("");
+  }, [detailItem, useRealApi]);
+
+  const handleSendTenantComplaintMessage = () => {
+    if (!detailItem || detailItem.type !== "complaint" || !complaintMessageText.trim() || !useRealApi) return;
+    const id = (detailItem.data as ComplaintDTO).id;
+    setComplaintMessageSending(true);
+    sendComplaintMessage(id, complaintMessageText.trim())
+      .then(() => {
+        setComplaintMessageText("");
+        return getComplaintMessages(id);
+      })
+      .then((res) => {
+        const list = (res as { data?: ComplaintMessageDTO[] }).data;
+        if (Array.isArray(list)) setComplaintMessages(list);
+        toastSuccess("Message sent");
+      })
+      .catch((err) => toastError("Failed to send", (err as Error)?.message))
+      .finally(() => setComplaintMessageSending(false));
+  };
 
   useEffect(() => {
     if (!useRealApi || !complaintForm.propertyId) {
@@ -356,7 +400,7 @@ const Dashboard = () => {
   const handleRaiseComplaint = async () => {
     if (useRealApi) {
       if (!complaintForm.subject?.trim() || !complaintForm.description?.trim() || !complaintForm.propertyId) {
-        toast({ title: "Missing fields", description: "Subject, description, and property are required.", variant: "destructive" });
+        toastError("Missing fields", "Subject, description, and property are required.");
         return;
       }
       try {
@@ -367,7 +411,7 @@ const Dashboard = () => {
           propertyId: complaintForm.propertyId,
           ...(complaintForm.relatedUserId > 0 && { relatedUserId: complaintForm.relatedUserId }),
         });
-        toast({ title: "Complaint raised", description: "Your complaint has been submitted successfully." });
+        toastSuccess("Complaint raised", "Your complaint has been submitted successfully.");
         setComplaintDialog(false);
         setComplaintForm({ subject: "", description: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" });
         getComplaints().then((res) => {
@@ -375,14 +419,14 @@ const Dashboard = () => {
           if (Array.isArray(list)) setApiComplaints(list);
         });
       } catch (err: unknown) {
-        toast({ title: "Failed to raise complaint", description: (err as Error)?.message ?? "Please try again.", variant: "destructive" });
+        toastError("Failed to raise complaint", (err as Error)?.message ?? "Please try again.");
       }
       return;
     }
     if (!complaintForm.subject?.trim() || !complaintForm.propertyId) return;
     const prop = properties.find(p => p.id === complaintForm.propertyId);
     raiseComplaint({ title: complaintForm.subject, description: complaintForm.description, raisedBy: tenantForData, raisedByRole: "TENANT", againstUser: "", againstRole: "OWNER", propertyId: complaintForm.propertyId, propertyTitle: prop?.title || "", priority: complaintForm.priority as Complaint["priority"] });
-    toast({ title: "Complaint raised" });
+    toastSuccess("Complaint raised");
     setComplaintDialog(false);
     setComplaintForm({ subject: "", description: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" });
   };
@@ -390,15 +434,15 @@ const Dashboard = () => {
   const handleMakePayment = (id: number) => {
     if (demoMode) return;
     makePayment(id);
-    toast({ title: "Payment successful", description: "Rent paid successfully" });
+    toastSuccess("Payment successful", "Rent paid successfully");
   };
 
   const handleSaveDemoProfile = () => {
     if (!profileForm.email?.trim()) {
-      toast({ title: "Email required", variant: "destructive" });
+      toastError("Email required");
       return;
     }
-    toast({ title: "Profile updated", description: "Your changes have been saved." });
+    toastSuccess("Profile updated", "Your changes have been saved.");
     setProfileDialogOpen(false);
   };
 
@@ -413,15 +457,15 @@ const Dashboard = () => {
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
     const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
     if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toast({ title: "Missing fields", description: "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).", variant: "destructive" });
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
       return;
     }
     if (aadharVal.length !== 12) {
-      toast({ title: "Aadhar required", description: "Aadhar number must be 12 digits.", variant: "destructive" });
+      toastError("Aadhar required", "Aadhar number must be 12 digits.");
       return;
     }
     if (stateName && !isPincodeValidForState(f.pinCode.trim(), stateName)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     openConfirm("Update profile?", "Your profile details will be saved. Click the Verify badge to submit for review.", "Save", "default", () => handleUpdateProfile());
@@ -433,15 +477,15 @@ const Dashboard = () => {
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
     const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
     if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toast({ title: "Missing fields", description: "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).", variant: "destructive" });
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
       return;
     }
     if (aadharVal.length !== 12) {
-      toast({ title: "Aadhar required", description: "Aadhar number must be 12 digits.", variant: "destructive" });
+      toastError("Aadhar required", "Aadhar number must be 12 digits.");
       return;
     }
     if (stateName && !isPincodeValidForState(f.pinCode.trim(), stateName)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
@@ -459,7 +503,7 @@ const Dashboard = () => {
         state: stateName.trim(),
         pincode: f.pinCode.trim(),
       });
-      toast({ title: "Profile updated", description: "Your changes have been saved. Click Verify to submit for review." });
+      toastSuccess("Profile updated", "Your changes have been saved. Click Verify to submit for review.");
       setProfileUpdateDialogOpen(false);
       setProfileUpdatedNeedsResubmit(true);
       return;
@@ -500,12 +544,12 @@ const Dashboard = () => {
             address: data.address || "", city: data.city || "", state: data.state || "", pinCode: data.pinCode || "", stateCode,
           });
         }
-        toast({ title: "Profile updated", description: "Your profile has been updated. Click Verify to submit for review." });
+        toastSuccess("Profile updated", "Your profile has been updated. Click Verify to submit for review.");
         setProfileUpdateDialogOpen(false);
         setProfileUpdatedNeedsResubmit(true);
         fetchProfileFromDb();
       })
-      .catch((err) => toast({ title: "Update failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Update failed", err?.message))
       .finally(() => setUpdatingProfile(false));
   };
 
@@ -515,15 +559,15 @@ const Dashboard = () => {
     const aadharVal = (f.aadharNumber || f.idNumber || "").trim().replace(/\D/g, "");
     const stateName = f.stateCode ? (indianStates.find((s) => s.code === f.stateCode)?.name ?? f.state) : f.state;
     if (!f.fullName?.trim() || !f.dateOfBirth || !mobileStr || !f.address?.trim() || !stateName?.trim() || !f.city?.trim() || !f.pinCode?.trim()) {
-      toast({ title: "Missing fields", description: "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).", variant: "destructive" });
+      toastError("Missing fields", "Fill all mandatory fields (name, DOB, mobile, address, state, city, pin code).");
       return;
     }
     if (aadharVal.length !== 12) {
-      toast({ title: "Aadhar required", description: "Aadhar number must be 12 digits.", variant: "destructive" });
+      toastError("Aadhar required", "Aadhar number must be 12 digits.");
       return;
     }
     if (!isPincodeValidForState(f.pinCode.trim(), stateName)) {
-      toast({ title: "Invalid pin code", description: "This pin code does not belong to the selected state.", variant: "destructive" });
+      toastError("Invalid pin code", "This pin code does not belong to the selected state.");
       return;
     }
     if (demoMode) {
@@ -577,7 +621,7 @@ const Dashboard = () => {
         setVerifySuccessDialog({ open: true, message });
         fetchProfileFromDb();
       })
-      .catch((err) => toast({ title: "Submission failed", description: err?.message, variant: "destructive" }))
+      .catch((err) => toastError("Submission failed", err?.message))
       .finally(() => setSubmittingProfile(false));
   };
 
@@ -875,31 +919,31 @@ const Dashboard = () => {
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                   <div className="flex flex-col gap-3">
-                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                      <div className="flex items-center gap-2">
-                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 min-w-0">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="h-9 w-9 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center shrink-0">
                           <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
                         </div>
-                        <div>
+                        <div className="min-w-0">
                           <h2 className="text-lg font-bold text-foreground">My Complaints</h2>
-                          <p className="text-xs text-muted-foreground">View and track complaints you raised. Use the filter or raise a new one.</p>
+                          <p className="text-xs text-muted-foreground">View and track complaints. Click a row for details and messages.</p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 w-full">
                       <StatusFilterDropdown value={complaintStatusFilter} onChange={setComplaintStatusFilter} />
                       <button
                         type="button"
                         onClick={() => setComplaintDialog(true)}
-                        disabled={apiComplaintsLoading}
-                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors"
+                        disabled={apiComplaintsLoading && Boolean(useRealApi)}
+                        className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors shrink-0"
                       >
                         <Plus className="h-3.5 w-3.5" /> Raise
                       </button>
                     </div>
                   </div>
                 </div>
-                {apiComplaintsLoading ? (
+                {useRealApi && apiComplaintsLoading ? (
                   <div className="py-8 text-center text-sm text-muted-foreground">Loading complaints…</div>
                 ) : myComplaints.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
@@ -919,26 +963,45 @@ const Dashboard = () => {
                 ) : (
                   <div className="space-y-3">
                     {myComplaints.map((c: ComplaintDTO | (Complaint & { subject?: string; relatedUserName?: string })) => {
-                      const subject = "subject" in c ? c.subject : (c as Complaint).title;
-                      const sub = "relatedUserName" in c ? (c as ComplaintDTO).relatedUserName : (c as Complaint).againstUser;
-                      const propLabel = "propertyTitle" in c && (c as Complaint).propertyTitle ? (c as Complaint).propertyTitle : `Property #${(c as ComplaintDTO).propertyId}`;
-                      const status = c.status;
-                      const priority = c.priority;
-                      const statusCls = status === "OPEN" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300" : status === "IN_PROGRESS" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300" : status === "RESOLVED" || status === "CLOSED" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200 border-emerald-300" : "bg-muted text-muted-foreground";
-                      const priorityCls = priority === "HIGH" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300" : priority === "MEDIUM" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300" : "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200 border-slate-300";
+                      const subject = "subject" in c && c.subject ? c.subject : (c as Complaint).title;
+                      const raisedBy = "raisedByUserName" in c ? (c as ComplaintDTO).raisedByUserName : (c as Complaint).raisedBy;
+                      const against = "relatedUserName" in c ? (c as ComplaintDTO).relatedUserName : (c as Complaint).againstUser;
+                      const pid = "propertyId" in c ? (c as ComplaintDTO).propertyId : (c as Complaint).propertyId;
+                      const propertyTitle = useRealApi && pid ? (apiPropertiesForComplaint.find((p) => p.id === pid)?.title ?? (c as Complaint).propertyTitle ?? (pid ? `Property #${pid}` : "")) : ((c as Complaint).propertyTitle || (pid ? `Property #${pid}` : ""));
+                      const priorityCls = c.priority === "HIGH" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 border-rose-300" : c.priority === "MEDIUM" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200 border-amber-300" : "bg-slate-100 text-slate-700 dark:bg-slate-700/40 dark:text-slate-200 border-slate-300";
                       return (
-                        <div key={c.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-4 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                        <div
+                          key={c.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => setDetailItem({ type: "complaint", data: c })}
+                          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailItem({ type: "complaint", data: c }); } }}
+                          className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-4 shadow-sm hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all cursor-pointer active:scale-[0.995]"
+                        >
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                               <p className="text-sm font-semibold text-card-foreground truncate">{subject}</p>
-                              <p className="text-xs text-muted-foreground mt-0.5">{propLabel}{sub ? ` • Related: ${sub}` : ""}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                {raisedBy === tenantForData ? `Against: ${against || "—"}` : `By: ${raisedBy || "—"}`} • {propertyTitle || "—"}
+                              </p>
                             </div>
                             <div className="flex flex-col items-end gap-1.5 shrink-0">
-                              <Badge variant="outline" className={`text-[10px] border ${priorityCls}`}>{priority}</Badge>
-                              <Badge variant="outline" className={`text-[10px] border ${statusCls}`}>{status}</Badge>
+                              <Badge variant="outline" className={`text-[10px] border ${priorityCls}`}>{c.priority}</Badge>
+                              {(c.status === "RESOLVED" || c.status === "CLOSED") ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                                  <CheckCircle className="h-3.5 w-3.5" /> {c.status}
+                                </span>
+                              ) : c.status === "OPEN" ? (
+                                <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300">{c.status}</span>
+                              ) : c.status === "IN_PROGRESS" ? (
+                                <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                                  <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
+                                </span>
+                              ) : (
+                                <Badge variant="outline" className="text-[10px]">{c.status}</Badge>
+                              )}
                             </div>
                           </div>
-                          <p className="text-[10px] text-muted-foreground mt-2">{new Date(c.createdAt).toLocaleDateString()}</p>
                         </div>
                       );
                     })}
@@ -1244,171 +1307,59 @@ const Dashboard = () => {
 
       {/* Submit profile for verification (tenant, real API) */}
       <Dialog open={profileSubmitDialogOpen} onOpenChange={setProfileSubmitDialogOpen}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
-          <DialogHeader><DialogTitle>Submit profile for verification</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Complete the form so admin can verify your profile. You can request visits/rentals after approval.</p>
-          <div className="space-y-6 py-3">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><User className="h-4 w-4 text-primary" /> Personal Details</h3>
-              <div className="flex flex-col gap-3">
-                <div className="space-y-1.5 w-full">
-                  <Label>Full name <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.fullName} onChange={e => setProfileSubmitForm(f => ({ ...f, fullName: e.target.value }))} placeholder="e.g. Sneha Kumar" className="h-10 w-full" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Gender <span className="text-destructive">*</span></Label>
-                  <Select value={profileSubmitForm.gender} onValueChange={v => setProfileSubmitForm(f => ({ ...f, gender: v }))}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="Male">Male</SelectItem><SelectItem value="Female">Female</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
-                  </Select>
-                </div>
-                <div className="w-full">
-                  <DatePickerInput label="Date of birth *" value={profileSubmitForm.dateOfBirth} onChange={v => setProfileSubmitForm(f => ({ ...f, dateOfBirth: v }))} maxDate={new Date()} placeholder="Select date" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Aadhar / ID number <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.aadharNumber || profileSubmitForm.idNumber} onChange={e => setProfileSubmitForm(f => ({ ...f, aadharNumber: e.target.value.replace(/\D/g, "").slice(0, 12), idNumber: e.target.value.replace(/\D/g, "").slice(0, 12) }))} placeholder="12 digits" maxLength={12} className="h-10 w-full" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Mobile <span className="text-destructive">*</span></Label>
-                  <MobileInput hideLabel compact value={profileSubmitForm.mobile} onChange={(v) => setProfileSubmitForm(f => ({ ...f, mobile: v }))} placeholder="9876543210" />
-                </div>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /> Address Details</h3>
-              <div className="flex flex-col gap-3">
-                <div className="space-y-1.5 w-full">
-                  <Label>State <span className="text-destructive">*</span></Label>
-                  <Select value={profileSubmitForm.stateCode} onValueChange={v => setProfileSubmitForm(f => ({ ...f, stateCode: v, state: indianStates.find(s => s.code === v)?.name ?? "", city: "", pinCode: "" }))}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Select State" /></SelectTrigger>
-                    <SelectContent className="max-h-60">{indianStates.map(s => <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>District / City <span className="text-destructive">*</span></Label>
-                  {getCitiesForState(profileSubmitForm.stateCode).length > 0 ? (
-                    <Select value={profileSubmitForm.city} onValueChange={v => setProfileSubmitForm(f => ({ ...f, city: v }))} disabled={!profileSubmitForm.stateCode}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder={profileSubmitForm.stateCode ? "Select City" : "Select state first"} /></SelectTrigger>
-                      <SelectContent className="max-h-60">{getCitiesForState(profileSubmitForm.stateCode).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value={profileSubmitForm.city} onChange={e => setProfileSubmitForm(f => ({ ...f, city: e.target.value }))} placeholder="e.g. Bangalore" disabled={!profileSubmitForm.stateCode} className="h-10 w-full" />
-                  )}
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Pin code <span className="text-destructive">*</span></Label>
-                  {statePincodeRanges[profileSubmitForm.stateCode]?.samples?.length ? (
-                    <Select value={profileSubmitForm.pinCode} onValueChange={v => setProfileSubmitForm(f => ({ ...f, pinCode: v }))}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Select Pin Code" /></SelectTrigger>
-                      <SelectContent>{(statePincodeRanges[profileSubmitForm.stateCode]?.samples ?? []).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <>
-                      <Input placeholder="e.g. 560001" maxLength={6} value={profileSubmitForm.pinCode} onChange={e => setProfileSubmitForm(f => ({ ...f, pinCode: e.target.value.replace(/\D/g, "").slice(0, 6) }))} className={`h-10 w-full ${profileSubmitForm.stateCode && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.stateCode) ? "border-destructive" : ""}`} />
-                      {profileSubmitForm.stateCode && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.stateCode) && <p className="text-xs text-destructive">Pin code does not belong to selected state</p>}
-                    </>
-                  )}
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Address <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.address} onChange={e => setProfileSubmitForm(f => ({ ...f, address: e.target.value }))} placeholder="Street address, locality" className="h-10 w-full" />
-                </div>
-              </div>
-            </div>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Submit profile for verification</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Complete the form so admin can verify your profile. You can request visits/rentals after approval.</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSubmitProfileForReview} disabled={submittingProfile}>
-              {submittingProfile ? "Submitting..." : "Submit for review"}
-            </Button>
-          </DialogFooter>
+          <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+            <ThemeProvider theme={tenantProfileMuiTheme}>
+              <TenantProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
+            </ThemeProvider>
+          </div>
+          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <Button variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setProfileSubmitDialogOpen(false)}>Cancel</Button>
+              <Button className="min-h-10 w-full sm:w-auto" onClick={handleSubmitProfileForReview} disabled={submittingProfile}>
+                {submittingProfile ? "Submitting..." : "Submit for review"}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
       {/* Update profile (tenant, real API) — same form, PUT only */}
       <Dialog open={profileUpdateDialogOpen} onOpenChange={setProfileUpdateDialogOpen}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto p-4 sm:p-6">
-          <DialogHeader><DialogTitle>Update profile</DialogTitle></DialogHeader>
-          <p className="text-sm text-muted-foreground">Update your profile details. Click the Verify badge above to submit for review.</p>
-          <div className="space-y-6 py-3">
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><User className="h-4 w-4 text-primary" /> Personal Details</h3>
-              <div className="flex flex-col gap-3">
-                <div className="space-y-1.5 w-full">
-                  <Label>Full name <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.fullName} onChange={e => setProfileSubmitForm(f => ({ ...f, fullName: e.target.value }))} placeholder="e.g. Sneha Kumar" className="h-10 w-full" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Gender <span className="text-destructive">*</span></Label>
-                  <Select value={profileSubmitForm.gender} onValueChange={v => setProfileSubmitForm(f => ({ ...f, gender: v }))}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="Male">Male</SelectItem><SelectItem value="Female">Female</SelectItem><SelectItem value="Other">Other</SelectItem></SelectContent>
-                  </Select>
-                </div>
-                <div className="w-full">
-                  <DatePickerInput label="Date of birth *" value={profileSubmitForm.dateOfBirth} onChange={v => setProfileSubmitForm(f => ({ ...f, dateOfBirth: v }))} maxDate={new Date()} placeholder="Select date" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Aadhar / ID number <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.aadharNumber || profileSubmitForm.idNumber} onChange={e => setProfileSubmitForm(f => ({ ...f, aadharNumber: e.target.value.replace(/\D/g, "").slice(0, 12), idNumber: e.target.value.replace(/\D/g, "").slice(0, 12) }))} placeholder="12 digits" maxLength={12} className="h-10 w-full" />
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Mobile <span className="text-destructive">*</span></Label>
-                  <MobileInput hideLabel compact value={profileSubmitForm.mobile} onChange={(v) => setProfileSubmitForm(f => ({ ...f, mobile: v }))} placeholder="9876543210" />
-                </div>
-              </div>
-            </div>
-            <div>
-              <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2"><MapPin className="h-4 w-4 text-primary" /> Address Details</h3>
-              <div className="flex flex-col gap-3">
-                <div className="space-y-1.5 w-full">
-                  <Label>State <span className="text-destructive">*</span></Label>
-                  <Select value={profileSubmitForm.stateCode} onValueChange={v => setProfileSubmitForm(f => ({ ...f, stateCode: v, state: indianStates.find(s => s.code === v)?.name ?? "", city: "", pinCode: "" }))}>
-                    <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Select State" /></SelectTrigger>
-                    <SelectContent className="max-h-60">{indianStates.map(s => <SelectItem key={s.code} value={s.code}>{s.name}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>District / City <span className="text-destructive">*</span></Label>
-                  {getCitiesForState(profileSubmitForm.stateCode).length > 0 ? (
-                    <Select value={profileSubmitForm.city} onValueChange={v => setProfileSubmitForm(f => ({ ...f, city: v }))} disabled={!profileSubmitForm.stateCode}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder={profileSubmitForm.stateCode ? "Select City" : "Select state first"} /></SelectTrigger>
-                      <SelectContent className="max-h-60">{getCitiesForState(profileSubmitForm.stateCode).map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <Input value={profileSubmitForm.city} onChange={e => setProfileSubmitForm(f => ({ ...f, city: e.target.value }))} placeholder="e.g. Bangalore" disabled={!profileSubmitForm.stateCode} className="h-10 w-full" />
-                  )}
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Pin code <span className="text-destructive">*</span></Label>
-                  {statePincodeRanges[profileSubmitForm.stateCode]?.samples?.length ? (
-                    <Select value={profileSubmitForm.pinCode} onValueChange={v => setProfileSubmitForm(f => ({ ...f, pinCode: v }))}>
-                      <SelectTrigger className="h-10 w-full"><SelectValue placeholder="Select Pin Code" /></SelectTrigger>
-                      <SelectContent>{(statePincodeRanges[profileSubmitForm.stateCode]?.samples ?? []).map(p => <SelectItem key={p} value={p}>{p}</SelectItem>)}</SelectContent>
-                    </Select>
-                  ) : (
-                    <>
-                      <Input placeholder="e.g. 560001" maxLength={6} value={profileSubmitForm.pinCode} onChange={e => setProfileSubmitForm(f => ({ ...f, pinCode: e.target.value.replace(/\D/g, "").slice(0, 6) }))} className={`h-10 w-full ${profileSubmitForm.stateCode && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.stateCode) ? "border-destructive" : ""}`} />
-                      {profileSubmitForm.stateCode && profileSubmitForm.pinCode.length === 6 && !isPincodeValidForState(profileSubmitForm.pinCode, profileSubmitForm.stateCode) && <p className="text-xs text-destructive">Pin code does not belong to selected state</p>}
-                    </>
-                  )}
-                </div>
-                <div className="space-y-1.5 w-full">
-                  <Label>Address <span className="text-destructive">*</span></Label>
-                  <Input value={profileSubmitForm.address} onChange={e => setProfileSubmitForm(f => ({ ...f, address: e.target.value }))} placeholder="Street address, locality" className="h-10 w-full" />
-                </div>
-              </div>
-            </div>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Update profile</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Update your profile details. Click the Verify badge above to submit for review.</p>
           </div>
-          <DialogFooter className="flex-col sm:flex-row gap-2">
-            <Button variant="outline" onClick={() => setProfileUpdateDialogOpen(false)} className="border-2 border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 hover:border-slate-500 dark:hover:border-slate-400">
-              Cancel
-            </Button>
-            <Button onClick={handleUpdateProfileClick} disabled={!canSaveProfileUpdate || updatingProfile} className="border-2 border-emerald-600 dark:border-emerald-500 bg-emerald-600 dark:bg-emerald-700 text-white hover:bg-emerald-700 dark:hover:bg-emerald-600 hover:border-emerald-700 dark:hover:border-emerald-600">
-              {updatingProfile ? "Saving..." : <><CheckCircle className="h-4 w-4 mr-2" /> Save</>}
-            </Button>
-          </DialogFooter>
+          <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+            <ThemeProvider theme={tenantProfileMuiTheme}>
+              <TenantProfileMuiForm form={profileSubmitForm} setForm={setProfileSubmitForm} />
+            </ThemeProvider>
+          </div>
+          <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+            <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+              <Button variant="outline" onClick={() => setProfileUpdateDialogOpen(false)} className="min-h-10 w-full border-2 border-slate-400 dark:border-slate-500 bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 sm:w-auto">
+                Cancel
+              </Button>
+              <Button onClick={handleUpdateProfileClick} disabled={!canSaveProfileUpdate || updatingProfile} className="min-h-10 w-full border-2 border-emerald-600 dark:border-emerald-500 bg-emerald-600 dark:bg-emerald-700 text-white hover:bg-emerald-700 dark:hover:bg-emerald-600 sm:w-auto">
+                {updatingProfile ? "Saving..." : <><CheckCircle className="h-4 w-4 mr-2" /> Save</>}
+              </Button>
+            </DialogFooter>
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -1424,65 +1375,171 @@ const Dashboard = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Complaint Dialog */}
+      {/* Complaint detail (same structure as owner dashboard: summary, people, status, resolution, actions strip, messages) */}
+      <Dialog open={!!detailItem} onOpenChange={(open) => { if (!open) setDetailItem(null); }}>
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Complaint Details</DialogTitle>
+          </DialogHeader>
+          {detailItem?.type === "complaint" && (() => {
+            const raw = detailItem.data;
+            const c = raw as ComplaintDTO & { title?: string; raisedBy?: string; againstUser?: string; propertyTitle?: string; adminNote?: string };
+            const subject = c.subject ?? c.title ?? "";
+            const raisedBy = c.raisedByUserName ?? c.raisedBy ?? "";
+            const related = c.relatedUserName ?? c.againstUser ?? "";
+            const pid = c.propertyId;
+            const propertyTitle = (pid && apiPropertiesForComplaint.find((p) => p.id === pid)?.title) ?? c.propertyTitle ?? (pid ? `Property #${pid}` : "—");
+            const description = c.description ?? (raw as Complaint).description ?? "";
+            const isResolved = c.status === "RESOLVED" || c.status === "CLOSED";
+            const priorityCls = c.priority === "HIGH" ? "bg-rose-100 text-rose-800" : c.priority === "MEDIUM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700";
+            const createdAt = c.createdAt ?? (raw as Complaint).createdAt;
+            return (
+              <div className="space-y-4 py-2">
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Summary</p>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">{subject || "No subject"}</p>
+                    <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{description || "—"}</p>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">People & property</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                    <div><span className="text-muted-foreground">Raised by</span><p className="font-medium text-foreground">{raisedBy || "—"}</p></div>
+                    <div><span className="text-muted-foreground">Related to</span><p className="font-medium text-foreground">{related || "—"}</p></div>
+                    {c.assignedToUserName && <div className="sm:col-span-2"><span className="text-muted-foreground">Assigned to</span><p className="font-medium text-foreground">{c.assignedToUserName}</p></div>}
+                    <div className="sm:col-span-2"><span className="text-muted-foreground">Property</span><p className="font-medium text-foreground">{propertyTitle}</p></div>
+                  </div>
+                </div>
+                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status & dates</p>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div>
+                      <span className="text-xs text-muted-foreground block">Status</span>
+                      {isResolved ? (
+                        <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 mt-0.5">
+                          <CheckCircle className="h-3.5 w-3.5" /> {c.status}
+                        </span>
+                      ) : c.status === "OPEN" ? (
+                        <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300 mt-0.5">{c.status}</span>
+                      ) : c.status === "IN_PROGRESS" ? (
+                        <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 mt-0.5">
+                          <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
+                        </span>
+                      ) : (
+                        <Badge variant="outline" className="mt-0.5">{c.status}</Badge>
+                      )}
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground block">Priority</span>
+                      <Badge variant="outline" className={`${priorityCls} mt-0.5`}>{c.priority}</Badge>
+                    </div>
+                    <div>
+                      <span className="text-xs text-muted-foreground block">Created</span>
+                      <p className="text-sm font-medium">{createdAt ? new Date(createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—"}</p>
+                    </div>
+                  </div>
+                </div>
+                {(c.resolutionNote || c.adminNote) && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-2">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Resolution & notes</p>
+                    {c.resolutionNote && <div><span className="text-xs text-muted-foreground">Resolution note</span><p className="text-sm text-foreground mt-0.5">{c.resolutionNote}</p></div>}
+                    {c.adminNote && <div><span className="text-xs text-muted-foreground">Admin note</span><p className="text-sm text-foreground mt-0.5">{c.adminNote}</p></div>}
+                  </div>
+                )}
+                {useRealApi && (
+                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</p>
+                    <div className="flex flex-wrap items-center gap-2 w-full">
+                      <div
+                        className="min-w-[168px] h-8 gap-2 text-xs rounded-md border border-violet-500/50 text-violet-600 dark:text-violet-400 bg-transparent px-2.5 flex flex-row items-center"
+                        title="Status is updated by the owner or admin"
+                      >
+                        <Clock className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span className="truncate font-medium">{c.status}</span>
+                      </div>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">You can message below. The property owner updates status when resolving your complaint.</p>
+                  </div>
+                )}
+                {useRealApi && (
+                  <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Messages</p>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {complaintMessages.length === 0 && <p className="text-xs text-muted-foreground">No messages yet.</p>}
+                      {complaintMessages.map((m) => (
+                        <div key={m.id ?? `${m.createdAt}-${m.messageText}`} className="rounded-lg bg-muted/50 p-3 text-sm border border-slate-200/50 dark:border-slate-700/50">
+                          <p className="font-medium text-xs text-muted-foreground">{m.senderUserName}</p>
+                          <p className="mt-0.5 text-foreground">{m.messageText}</p>
+                          {m.createdAt && <p className="text-[10px] text-muted-foreground mt-1">{new Date(m.createdAt).toLocaleString()}</p>}
+                        </div>
+                      ))}
+                    </div>
+                    <form onSubmit={(e) => { e.preventDefault(); handleSendTenantComplaintMessage(); }} className="flex gap-2">
+                      <Input value={complaintMessageText} onChange={(e) => setComplaintMessageText(e.target.value)} placeholder="Type a message..." className="flex-1" />
+                      <Button type="submit" size="sm" disabled={!complaintMessageText.trim() || complaintMessageSending}>{complaintMessageSending ? "Sending…" : "Send"}</Button>
+                    </form>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
+      {/* Raise complaint — same shell as profile */}
       <Dialog open={complaintDialog} onOpenChange={(open) => { if (!open) setComplaintForm({ subject: "", description: "", propertyId: 0, relatedUserId: 0, priority: "MEDIUM" }); setComplaintDialog(open); }}>
-        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
-          <DialogHeader><DialogTitle>Raise a Complaint</DialogTitle></DialogHeader>
+        <DialogContent
+          className="flex max-h-[min(92vh,760px)] w-[calc(100vw-1rem)] max-w-2xl flex-col gap-0 overflow-hidden rounded-2xl border-0 p-0 shadow-2xl duration-200 sm:w-full [&]:translate-y-[-48%] sm:[&]:translate-y-[-50%]"
+          onPointerDownOutside={(e) => {
+            if (shouldPreventDialogCloseForMuiPicker(e.target, e.detail?.originalEvent)) e.preventDefault();
+          }}
+        >
+          <div className="shrink-0 space-y-1.5 rounded-t-2xl border-b border-border bg-slate-50/90 px-5 pb-4 pt-6 dark:bg-slate-900/60 sm:px-7">
+            <DialogHeader className="space-y-1 text-left"><DialogTitle className="text-xl font-semibold tracking-tight">Raise a complaint</DialogTitle></DialogHeader>
+            <p className="text-sm leading-relaxed text-muted-foreground">Select your property and describe the issue. Priority helps the owner respond.</p>
+          </div>
           <form
-            className="space-y-4 py-2"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
             onSubmit={(e) => { e.preventDefault(); handleRaiseComplaint(); }}
           >
-            <div className="space-y-2">
-              <Label>Property</Label>
-              <Select value={complaintForm.propertyId?.toString() || ""} onValueChange={v => setComplaintForm(f => ({ ...f, propertyId: +v, relatedUserId: 0 }))}>
-                <SelectTrigger><SelectValue placeholder="Select property" /></SelectTrigger>
-                <SelectContent>
-                  {(useRealApi ? apiPropertiesForComplaint : (demoMode ? properties.filter(p => p.status === "RENTED" && p.tenantUserName === tenantForData) : properties).map(p => ({ id: p.id, title: p.title }))).map(p => (
-                    <SelectItem key={p.id} value={p.id.toString()}>{p.title}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="min-h-0 flex-1 scroll-smooth overflow-y-auto overscroll-contain bg-background px-5 py-4 sm:px-7">
+              <ThemeProvider theme={tenantProfileMuiTheme}>
+                <RaiseComplaintMuiFields
+                  properties={(useRealApi ? apiPropertiesForComplaint : (demoMode ? properties.filter((p) => p.status === "RENTED" && p.tenantUserName === tenantForData) : properties)).map((p) => ({ id: p.id, title: p.title }))}
+                  propertyId={complaintForm.propertyId}
+                  onPropertyId={(id) => setComplaintForm((f) => ({ ...f, propertyId: id, relatedUserId: 0 }))}
+                  headline={complaintForm.subject}
+                  onHeadline={(v) => setComplaintForm((f) => ({ ...f, subject: v }))}
+                  description={complaintForm.description}
+                  onDescription={(v) => setComplaintForm((f) => ({ ...f, description: v }))}
+                  priority={complaintForm.priority}
+                  onPriority={(v) => setComplaintForm((f) => ({ ...f, priority: v }))}
+                  showAgainstSelect={Boolean(useRealApi)}
+                  relatedUserId={complaintForm.relatedUserId}
+                  onRelatedUserId={(id) => setComplaintForm((f) => ({ ...f, relatedUserId: id }))}
+                  againstOptions={againstOptions}
+                  againstLoading={againstOptionsLoading}
+                  descriptionRequired={Boolean(useRealApi)}
+                />
+              </ThemeProvider>
             </div>
-            {useRealApi && (
-              <div className="space-y-2">
-                <Label>Against (optional)</Label>
-                <Select
-                  value={complaintForm.relatedUserId && complaintForm.relatedUserId > 0 ? String(complaintForm.relatedUserId) : "__none__"}
-                  onValueChange={(v) => setComplaintForm((f) => ({ ...f, relatedUserId: v === "__none__" ? 0 : Number(v) }))}
-                  disabled={againstOptionsLoading || !complaintForm.propertyId}
+            <div className="shrink-0 rounded-b-2xl border-t border-border bg-muted/30 px-5 py-4 dark:bg-slate-900/40 sm:px-7">
+              <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-3">
+                <Button type="button" variant="outline" className="min-h-10 w-full sm:w-auto" onClick={() => setComplaintDialog(false)}>Cancel</Button>
+                <Button
+                  type="submit"
+                  className="min-h-10 w-full sm:w-auto"
+                  disabled={
+                    !complaintForm.subject?.trim() ||
+                    (useRealApi ? !complaintForm.description?.trim() : false) ||
+                    !complaintForm.propertyId
+                  }
                 >
-                  <SelectTrigger><SelectValue placeholder={againstOptionsLoading ? "Loading…" : complaintForm.propertyId ? "Select someone (optional)" : "Select a property first"} /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— None —</SelectItem>
-                    {againstOptions.map((o) => <SelectItem key={o.userId} value={o.userId.toString()}>{o.userName}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-                {complaintForm.propertyId && !againstOptionsLoading && againstOptions.length === 0 && <p className="text-xs text-muted-foreground">No one associated with this property to select.</p>}
-              </div>
-            )}
-            <div className="space-y-2"><Label>Subject</Label><Input value={complaintForm.subject} onChange={e => setComplaintForm(f => ({ ...f, subject: e.target.value }))} placeholder="Brief subject" /></div>
-            <div className="space-y-2"><Label>Description</Label><Textarea value={complaintForm.description} onChange={e => setComplaintForm(f => ({ ...f, description: e.target.value }))} placeholder="Describe the issue..." rows={3} /></div>
-            <div className="space-y-2">
-              <Label>Priority</Label>
-              <Select value={complaintForm.priority} onValueChange={v => setComplaintForm(f => ({ ...f, priority: v as ComplaintPriority }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="LOW">Low</SelectItem>
-                  <SelectItem value="MEDIUM">Medium</SelectItem>
-                  <SelectItem value="HIGH">High</SelectItem>
-                </SelectContent>
-              </Select>
+                  <CheckCircle className="h-4 w-4 mr-2" /> Submit
+                </Button>
+              </DialogFooter>
             </div>
-            <DialogFooter className="flex-col sm:flex-row gap-2">
-              <Button type="button" variant="outline" onClick={() => setComplaintDialog(false)}>Cancel</Button>
-              <button
-                type="submit"
-                disabled={!complaintForm.subject?.trim() || !complaintForm.description?.trim() || !complaintForm.propertyId}
-                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 disabled:opacity-50 disabled:pointer-events-none px-2.5 py-1 text-xs font-medium transition-colors"
-              >
-                <CheckCircle className="h-3.5 w-3.5" /> Submit
-              </button>
-            </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>

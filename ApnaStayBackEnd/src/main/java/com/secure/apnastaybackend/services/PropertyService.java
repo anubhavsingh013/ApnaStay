@@ -3,7 +3,9 @@ package com.secure.apnastaybackend.services;
 import com.secure.apnastaybackend.dto.request.PropertyRequest;
 import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
+import com.secure.apnastaybackend.entity.PropertyImageFile;
 import com.secure.apnastaybackend.entity.PropertyStatus;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -11,6 +13,22 @@ public interface PropertyService {
     PropertyDTO createPropertyForUser(String userName, PropertyRequest request);
 
     PropertyDTO updatePropertyForUser(Long propertyId, PropertyRequest request, String userName);
+
+    /**
+     * Create property and attach uploaded image files (stored as LONGBLOB). Also supports external URLs in {@code request.images}.
+     *
+     * @param imageFiles optional; each file validated (type, size, count).
+     */
+    PropertyDTO createPropertyWithUploadedImages(String userName, PropertyRequest request, List<MultipartFile> imageFiles);
+
+    /**
+     * Update property fields. If {@code imageFiles} is non-null, replaces all DB-stored images: empty list removes them;
+     * omitted ({@code null}) leaves stored images unchanged. External URLs in {@code request.images} still apply to the element-collection field.
+     */
+    PropertyDTO updatePropertyWithUploadedImages(Long propertyId, PropertyRequest request, String userName, List<MultipartFile> imageFiles);
+
+    /** Load stored image bytes if the requester may access this property’s image (AVAILABLE, or owner, or admin). */
+    PropertyImageFile getImageFileForDownload(Long imageFileId, String authenticatedUsernameOrNull);
 
     List<PropertyDTO> getPropertyByOwnerUserName(String ownerUserName);
 

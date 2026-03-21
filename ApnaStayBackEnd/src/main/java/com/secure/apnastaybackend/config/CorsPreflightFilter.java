@@ -12,11 +12,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 
-/**
- * Runs as the first servlet filter (before Spring Security). For OPTIONS (CORS preflight),
- * responds immediately with 200 + CORS headers so the browser can send the real request
- * with Authorization. Without this, preflight hits security unauthenticated → 401.
- */
+
 public class CorsPreflightFilter extends OncePerRequestFilter {
 
     private final CorsConfigurationSource corsConfigurationSource;

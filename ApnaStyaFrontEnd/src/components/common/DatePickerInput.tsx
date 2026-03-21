@@ -1,9 +1,7 @@
-import * as React from "react";
-import { format } from "date-fns";
-import { Calendar } from "@/components/ui/calendar";
-import { Label } from "@/components/ui/label";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { cn } from "@/lib/utils";
+import { useMemo } from "react";
+import dayjs from "dayjs";
+import TextField from "@mui/material/TextField";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
 
 export interface DatePickerInputProps {
   value: string;
@@ -17,89 +15,76 @@ export interface DatePickerInputProps {
   placeholder?: string;
 }
 
-/** Formats Date to "yyyy-MM-dd". */
-function toYMD(d: Date): string {
-  return format(d, "yyyy-MM-dd");
-}
+const fieldTheme = createTheme({
+  palette: {
+    mode: "light",
+    primary: { main: "#0284c7" },
+    background: { default: "#fff", paper: "#fff" },
+    text: { primary: "#0f172a", secondary: "#64748b" },
+  },
+});
 
-/** Parses "yyyy-MM-dd" to Date. */
-function parseYMD(s: string): Date | undefined {
-  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return undefined;
-  const d = new Date(s);
-  return isNaN(d.getTime()) ? undefined : d;
+function toYMD(s: string): string {
+  if (!s?.trim()) return "";
+  const d = dayjs(s);
+  return d.isValid() ? d.format("YYYY-MM-DD") : "";
 }
 
 /**
- * Flowbite-style date picker: input with calendar icon on left, opens calendar popover.
- * Shows day grid first (like Flowbite). Uses "yyyy-MM-dd" format.
- * @see https://flowbite.com/docs/components/datepicker/
+ * Native `<input type="date">` (MUI TextField) so DOB works inside Radix dialogs:
+ * no popper/modal stacking, full scroll/zoom in the browser date UI, reliable clicks.
  */
 export function DatePickerInput({
   value,
-  onChange,
+  onChange: onValueChange,
   disabled = false,
   maxDate,
   minDate,
   label = "Date",
   className = "",
   hideLabel = false,
-  placeholder = "Select date",
 }: DatePickerInputProps) {
-  const [open, setOpen] = React.useState(false);
-  const date = parseYMD(value);
-
-  const handleSelect = (d: Date | undefined) => {
-    if (!d) return;
-    onChange(toYMD(d));
-    setOpen(false);
-  };
-
-  const displayValue = date ? format(date, "dd MMM yyyy") : "";
+  const minStr = useMemo(() => (minDate ? dayjs(minDate).format("YYYY-MM-DD") : "1900-01-01"), [minDate]);
+  const maxStr = useMemo(() => (maxDate ? dayjs(maxDate).format("YYYY-MM-DD") : ""), [maxDate]);
+  const ymd = useMemo(() => toYMD(value), [value]);
 
   return (
-    <div className={cn("w-full", className)}>
-      {!hideLabel && label && <Label className="mb-1.5 block">{label}</Label>}
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <div className="relative w-full">
-            <div className="absolute inset-y-0 start-0 flex items-center ps-3.5 pointer-events-none text-muted-foreground">
-              <svg className="w-4 h-4" aria-hidden="true" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 10h16m-8-3V4M7 7V4m10 3V4M5 20h14a1 1 0 0 0 1-1V7a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1Zm3-7h.01v.01H8V13Zm4 0h.01v.01H12V13Zm4 0h.01v.01H16V13Zm-8 4h.01v.01H8V17Zm4 0h.01v.01H12V17Zm4 0h.01v.01H16V17Z" />
-              </svg>
-            </div>
-            <input
-              type="text"
-              readOnly
-              disabled={disabled}
-              value={displayValue}
-              placeholder={placeholder}
-              className={cn(
-                "block w-full ps-9 pe-3 py-2.5 h-10 rounded-lg border border-input bg-background text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring focus:border-ring disabled:cursor-not-allowed disabled:opacity-50",
-                !date && "text-muted-foreground"
-              )}
-              onClick={() => !disabled && setOpen(true)}
-            />
-          </div>
-        </PopoverTrigger>
-        <PopoverContent className="w-auto p-0 rounded-lg" align="start">
-          <Calendar
-            mode="single"
-            selected={date}
-            onSelect={handleSelect}
-            disabled={(d) => {
-              if (minDate && d < minDate) return true;
-              if (maxDate && d > maxDate) return true;
-              return false;
-            }}
-            captionLayout="dropdown"
-            startMonth={minDate ?? new Date(1950, 0, 1)}
-            endMonth={maxDate ?? new Date()}
-            defaultMonth={date ?? maxDate ?? new Date()}
-            hideNavigation
-            initialFocus
-          />
-        </PopoverContent>
-      </Popover>
+    <div className={className}>
+      <ThemeProvider theme={fieldTheme}>
+        <TextField
+          type="date"
+          label={hideLabel ? undefined : label}
+          value={ymd}
+          onChange={(e) => {
+            const v = e.target.value;
+            if (v) onValueChange(v);
+          }}
+          disabled={disabled}
+          fullWidth
+          size="small"
+          variant="outlined"
+          InputLabelProps={{ shrink: true }}
+          slotProps={{
+            htmlInput: {
+              min: minStr,
+              ...(maxStr ? { max: maxStr } : {}),
+            } as React.InputHTMLAttributes<HTMLInputElement>,
+          }}
+          sx={{
+            width: "100%",
+            minWidth: 0,
+            "& .MuiOutlinedInput-root": {
+              backgroundColor: "#fff",
+              minHeight: 40,
+              borderRadius: 1,
+              color: "#0f172a",
+            },
+            "& .MuiOutlinedInput-input": { color: "#0f172a", cursor: "pointer" },
+            "& .MuiInputLabel-root": { color: "#64748b", fontSize: "0.75rem" },
+            "& .MuiOutlinedInput-notchedOutline": { borderColor: "#cbd5e1" },
+          }}
+        />
+      </ThemeProvider>
     </div>
   );
 }

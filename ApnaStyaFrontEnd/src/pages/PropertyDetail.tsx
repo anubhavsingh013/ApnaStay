@@ -15,7 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { toast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft, MapPin, Star, Heart, Share2, Bed, Bath, Maximize,
@@ -200,11 +200,11 @@ const PropertyDetail = () => {
   const handleScheduleVisit = () => {
     if (requireLogin()) return;
     if (!visitDate) {
-      toast({ title: "Select a date", description: "Please pick a visit date.", variant: "destructive" });
+      toastError("Select a date", "Please pick a visit date.");
       return;
     }
     if (!visitTime) {
-      toast({ title: "Select a time", description: "Please pick a time slot.", variant: "destructive" });
+      toastError("Select a time", "Please pick a time slot.");
       return;
     }
     requestBooking({
@@ -215,7 +215,7 @@ const PropertyDetail = () => {
       visitDate: visitDate.toISOString(),
       type: "VISIT",
     });
-    toast({ title: "Visit requested!", description: `Scheduled for ${format(visitDate, "PPP")} at ${visitTime}` });
+    toastSuccess("Visit requested!", `Scheduled for ${format(visitDate, "PPP")} at ${visitTime}`);
     setVisitDate(undefined);
     setVisitTime("");
   };
@@ -223,10 +223,10 @@ const PropertyDetail = () => {
   const handleContactOwner = () => {
     if (requireLogin()) return;
     if (!contactMsg.trim()) {
-      toast({ title: "Enter a message", variant: "destructive" });
+      toastError("Enter a message");
       return;
     }
-    toast({ title: "Message sent!", description: "The owner will be notified." });
+    toastSuccess("Message sent!", "The owner will be notified.");
     setContactMsg("");
     setContactOpen(false);
   };
@@ -337,7 +337,7 @@ const PropertyDetail = () => {
                 <Button variant="outline" size="icon" onClick={() => setLiked(!liked)}>
                   <Heart className={`h-4 w-4 ${liked ? "fill-destructive text-destructive" : ""}`} />
                 </Button>
-                <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(window.location.href); toast({ title: "Link copied!" }); }}>
+                <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(window.location.href); toastSuccess("Link copied!"); }}>
                   <Share2 className="h-4 w-4" />
                 </Button>
               </div>

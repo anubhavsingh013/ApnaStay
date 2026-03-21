@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Mail, Lock, User, Phone, Eye, EyeOff, Users, Briefcase, ArrowLeft, Sparkles, Shield } from "lucide-react";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { signup, sendPhoneCode, phoneVerifyAndLogin } from "@/lib/api";
-import { useToast } from "@/hooks/use-toast";
+import { toastSuccess, toastError } from "@/lib/app-toast";
 import { useAuth } from "@/contexts/AuthContext";
 import ApnaStayLogo from "@/components/common/ApnaStayLogo";
 
@@ -16,7 +16,6 @@ type PhoneStep = "enter" | "otp";
 
 const Signup = () => {
   const navigate = useNavigate();
-  const { toast } = useToast();
   const { setUser } = useAuth();
   const [role, setRole] = useState<"tenant" | "owner" | "broker">("tenant");
   const [method, setMethod] = useState<SignupMethod>("form");
@@ -38,7 +37,7 @@ const Signup = () => {
 
   const handleSignup = async () => {
     if (password !== confirmPassword) {
-      toast({ title: "Passwords don't match", variant: "destructive" });
+      toastError("Passwords don't match");
       return;
     }
     setLoading(true);
@@ -49,10 +48,10 @@ const Signup = () => {
         email: email || undefined,
         role: [roleMap[role]],
       });
-      toast({ title: "Account created!", description: res.message });
+      toastSuccess("Account created!", res.message);
       navigate("/login");
     } catch (err: any) {
-      toast({ title: "Sign up failed", description: err.message, variant: "destructive" });
+      toastError("Sign up failed", err.message);
     } finally {
       setLoading(false);
     }
@@ -64,9 +63,9 @@ const Signup = () => {
     try {
       await sendPhoneCode({ phoneNumber: phoneOnly });
       setPhoneStep("otp");
-      toast({ title: "OTP Sent", description: `Code sent to ${phoneOnly}` });
+      toastSuccess("OTP Sent", `Code sent to ${phoneOnly}`);
     } catch (err: any) {
-      toast({ title: "Failed", description: err.message, variant: "destructive" });
+      toastError("Failed", err.message);
     } finally {
       setLoading(false);
     }
@@ -78,10 +77,10 @@ const Signup = () => {
     try {
       const res = await phoneVerifyAndLogin({ phoneNumber: phoneOnly, verificationCode: otp });
       setUser({ username: res.username, roles: res.roles });
-      toast({ title: "Account created!", description: `Welcome ${res.username}` });
+      toastSuccess("Account created!", `Welcome ${res.username}`);
       navigate("/dashboard");
     } catch (err: any) {
-      toast({ title: "Verification failed", description: err.message, variant: "destructive" });
+      toastError("Verification failed", err.message);
     } finally {
       setLoading(false);
     }

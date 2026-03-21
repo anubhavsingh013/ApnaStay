@@ -13,16 +13,18 @@ import com.secure.apnastaybackend.services.PropertyService;
 import jakarta.validation.Valid;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
-import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/property")
@@ -48,7 +50,7 @@ public class PropertyController {
         }
     }
 
-    @PostMapping
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<PropertyDTO>> createProperty(
             @Valid @RequestBody PropertyRequest request,
             @AuthenticationPrincipal UserDetails userDetails) {
@@ -63,7 +65,28 @@ public class PropertyController {
                 .body(ApiResponse.success("Property created successfully", property));
     }
 
-    @PutMapping("/{propertyId}")
+    /**
+     * Create property with multipart uploads. Part {@code property}: JSON (same as {@link PropertyRequest}).
+     * Part {@code imageFiles}: zero or more image files (JPEG/PNG/WebP/GIF, max 7 MB each, max 20 per property).
+     */
+    @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<PropertyDTO>> createPropertyMultipart(
+            @Valid @RequestPart("property") PropertyRequest request,
+            @RequestPart(value = "imageFiles", required = false) List<MultipartFile> imageFiles,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        String userName = userDetails.getUsername();
+        log.info("Creating property (multipart) for user: {}, file count: {}", userName,
+                imageFiles != null ? imageFiles.size() : 0);
+
+        PropertyDTO property = propertyService.createPropertyWithUploadedImages(userName, request, imageFiles);
+        auditLogService.logPropertyCreation(userName, property);
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(ApiResponse.success("Property created successfully", property));
+    }
+
+    @PutMapping(value = "/{propertyId}", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<PropertyDTO>> updateProperty(
             @PathVariable Long propertyId,
             @Valid @RequestBody PropertyRequest request,
@@ -77,6 +100,50 @@ public class PropertyController {
         return ResponseEntity.ok(
                 ApiResponse.success("Property updated successfully", property)
         );
+    }
+
+    /**
+     * Update property with optional replacement of DB-stored images.
+     * Omit part {@code imageFiles} to keep existing uploaded images.
+     * Send an empty {@code imageFiles} list to clear all uploaded images. Non-empty list replaces all uploaded images.
+     */
+    @PutMapping(value = "/{propertyId}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<PropertyDTO>> updatePropertyMultipart(
+            @PathVariable Long propertyId,
+            @Valid @RequestPart("property") PropertyRequest request,
+            @RequestPart(value = "imageFiles", required = false) List<MultipartFile> imageFiles,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        String userName = userDetails.getUsername();
+        log.info("Updating property ID: {} (multipart) for user: {}", propertyId, userName);
+
+        PropertyDTO property = propertyService.updatePropertyWithUploadedImages(propertyId, request, userName, imageFiles);
+        auditLogService.logPropertyUpdate(userName, property);
+        return ResponseEntity.ok(ApiResponse.success("Property updated successfully", property));
+    }
+
+    /** Public/authenticated streaming of a DB-stored property image. */
+    @GetMapping("/image-file/{imageFileId}")
+    public ResponseEntity<byte[]> getPropertyImageFile(
+            @PathVariable Long imageFileId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        String username = userDetails != null ? userDetails.getUsername() : null;
+        var file = propertyService.getImageFileForDownload(imageFileId, username);
+
+        MediaType mt = MediaType.APPLICATION_OCTET_STREAM;
+        try {
+            if (file.getContentType() != null && !file.getContentType().isBlank()) {
+                mt = MediaType.parseMediaType(file.getContentType());
+            }
+        } catch (Exception ignored) {
+            mt = MediaType.IMAGE_JPEG;
+        }
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=86400")
+                .contentType(mt)
+                .body(file.getData());
     }
 
     @GetMapping

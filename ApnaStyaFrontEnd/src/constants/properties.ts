@@ -1,4 +1,4 @@
-import type { PropertyDTO } from "@/lib/api";
+import { resolvePropertyImageUrl, type PropertyDTO } from "@/lib/api";
 
 export const DEFAULT_PROPERTY_IMAGE = "https://images.unsplash.com/photo-1560448204-e02f11c3d0e2?w=600&h=400&fit=crop";
 
@@ -58,6 +58,8 @@ export function mapPropertyDtoToProperty(dto: PropertyDTO | Record<string, unkno
   const location = [d.address, d.city, d.state].filter(Boolean).join(", ") || [d.city, d.state].filter(Boolean).join(", ") || "—";
   const type = ((d.propertyType && PROPERTY_TYPE_MAP[String(d.propertyType)]) || "Flat") as Property["type"];
   const furnishing = ((d.furnishing && FURNISHING_MAP[String(d.furnishing)]) || "Fully Furnished") as Property["furnishing"];
+  const rawImages = Array.isArray(d.images) ? d.images : [];
+  const imagesResolved = rawImages.map((u) => resolvePropertyImageUrl(String(u)));
   return {
     id: d.id,
     title: d.title ?? "—",
@@ -71,7 +73,7 @@ export function mapPropertyDtoToProperty(dto: PropertyDTO | Record<string, unkno
     furnishing,
     type,
     amenities: d.amenities ?? [],
-    image: (d.images && Array.isArray(d.images) && d.images[0]) ? d.images[0] : DEFAULT_PROPERTY_IMAGE,
+    image: imagesResolved[0] || DEFAULT_PROPERTY_IMAGE,
     isFeatured: d.isFeatured ?? false,
     ownerUserName: d.ownerUserName ?? "",
     tenantUserName: d.tenantUserName ?? undefined,
@@ -82,7 +84,7 @@ export function mapPropertyDtoToProperty(dto: PropertyDTO | Record<string, unkno
     city: d.city,
     state: d.state,
     pinCode: d.pinCode,
-    images: d.images,
+    images: imagesResolved,
     status: d.status,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,

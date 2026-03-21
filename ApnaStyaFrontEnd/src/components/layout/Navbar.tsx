@@ -65,7 +65,7 @@ const Navbar = () => {
     navigate(dashboardPath, { state: { openProfile: true } });
   };
 
-  const protectedPaths = ["/dashboard", "/owner/dashboard", "/admin", "/broker/dashboard", "/owner/profile"];
+  const protectedPaths = ["/dashboard", "/owner/dashboard", "/admin", "/broker/dashboard"];
   const isOnProtectedRoute = protectedPaths.some((p) => location.pathname.startsWith(p));
 
   const handleToggleDemo = () => {
