@@ -10,10 +10,12 @@ import { useDemoData } from "@/features/demo/DemoDataContext";
 import { HomeFeaturedLoadingNotice } from "@/components/home/HomeFeaturedLoadingNotice";
 import { FeaturedPropertiesSkeleton } from "@/components/home/FeaturedPropertiesSkeleton";
 import { Button } from "@/components/ui/button";
-import { properties, mapPropertyDtoToProperty, type Property } from "@/constants/properties";
-import { getFeaturedProperties } from "@/lib/api";
+import { properties, type Property } from "@/constants/properties";
+import { getFeaturedFromCache, loadFeaturedPropertiesCached } from "@/lib/publicListingCache";
 import { Link } from "react-router-dom";
 import heroBg from "@/assets/hero-bg.jpg";
+
+const FEATURED_LOADING_NOTICE_SESSION_KEY = "apnastay_dismiss_featured_loading_notice";
 
 const filterChips = [
   { label: "Flat", key: "type", value: "Flat" },
@@ -28,10 +30,18 @@ const Index = () => {
   const { demoMode } = useDemoData();
   const [activeFilter, setActiveFilter] = useState<{ key: string; value: string } | null>(null);
   const searchBarRef = useRef<SearchBarRef>(null);
-  const [featuredProperties, setFeaturedProperties] = useState<Property[]>([]);
-  const [featuredLoading, setFeaturedLoading] = useState(true);
-  /** User closed the floating “please wait” notice; loading UI (skeleton) continues until fetch completes */
-  const [featuredLoadingNoticeDismissed, setFeaturedLoadingNoticeDismissed] = useState(false);
+  const [featuredProperties, setFeaturedProperties] = useState<Property[]>(() => getFeaturedFromCache() ?? []);
+  const [featuredLoading, setFeaturedLoading] = useState(() =>
+    demoMode ? false : getFeaturedFromCache() === null,
+  );
+  /** Persist dismiss for the browser tab so revisiting Home doesn’t reopen the toast */
+  const [featuredLoadingNoticeDismissed, setFeaturedLoadingNoticeDismissed] = useState(() => {
+    try {
+      return sessionStorage.getItem(FEATURED_LOADING_NOTICE_SESSION_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
 
   const staticFeatured = properties.filter((p) => p.isFeatured);
   const apiFeatured = featuredProperties;
@@ -42,15 +52,15 @@ const Index = () => {
       setFeaturedLoading(false);
       return;
     }
+    const cached = getFeaturedFromCache();
+    if (cached !== null) {
+      setFeaturedProperties(cached);
+      setFeaturedLoading(false);
+      return;
+    }
     setFeaturedLoading(true);
-    setFeaturedLoadingNoticeDismissed(false);
-    getFeaturedProperties()
-      .then((res) => {
-        const raw = res as { data?: unknown[] };
-        const list = Array.isArray(raw?.data) ? raw.data : [];
-        setFeaturedProperties(list.map((d) => mapPropertyDtoToProperty(d as Parameters<typeof mapPropertyDtoToProperty>[0])));
-      })
-      .catch(() => setFeaturedProperties([]))
+    loadFeaturedPropertiesCached()
+      .then((list) => setFeaturedProperties(list))
       .finally(() => setFeaturedLoading(false));
   }, [demoMode]);
 
@@ -210,7 +220,14 @@ const Index = () => {
       {/* Production: friendly notice while featured API loads (dismissible) */}
       <HomeFeaturedLoadingNotice
         open={featuredLoading && !demoMode && !featuredLoadingNoticeDismissed}
-        onDismiss={() => setFeaturedLoadingNoticeDismissed(true)}
+        onDismiss={() => {
+          setFeaturedLoadingNoticeDismissed(true);
+          try {
+            sessionStorage.setItem(FEATURED_LOADING_NOTICE_SESSION_KEY, "1");
+          } catch {
+            /* ignore */
+          }
+        }}
       />
 
       <Footer />

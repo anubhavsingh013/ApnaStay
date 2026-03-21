@@ -2,6 +2,7 @@ import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { properties, mapPropertyDtoToProperty, DEFAULT_PROPERTY_IMAGE, type Property } from "@/constants/properties";
+import { CachedPropertyImg } from "@/components/property/CachedPropertyImg";
 import { getPropertyById, getPublicPropertyById } from "@/lib/api";
 import { useDemoData } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -284,7 +285,11 @@ const PropertyDetail = () => {
           <button onClick={() => setGalleryIdx((prev) => (prev - 1 + images.length) % images.length)} className="absolute left-6 text-background hover:text-primary transition-colors">
             <ChevronLeft className="h-10 w-10" />
           </button>
-          <img src={images[galleryIdx] || DEFAULT_PROPERTY_IMAGE} alt="" className="max-h-[85vh] max-w-[90vw] object-contain rounded-lg" onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_PROPERTY_IMAGE; }} />
+          <CachedPropertyImg
+            src={images[galleryIdx] || DEFAULT_PROPERTY_IMAGE}
+            alt=""
+            className="max-h-[85vh] max-w-[90vw] object-contain rounded-lg"
+          />
           <button onClick={() => setGalleryIdx((prev) => (prev + 1) % images.length)} className="absolute right-6 text-background hover:text-primary transition-colors">
             <ChevronRight className="h-10 w-10" />
           </button>
@@ -304,12 +309,16 @@ const PropertyDetail = () => {
         {/* Gallery grid */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-8 rounded-2xl overflow-hidden cursor-pointer" onClick={() => setGalleryOpen(true)}>
           <div className="md:col-span-2 md:row-span-2 relative">
-            <img src={images[0]} alt={property.title} className="w-full h-full object-cover min-h-[300px] md:min-h-[400px]" onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_PROPERTY_IMAGE; }} />
+            <CachedPropertyImg
+              src={images[0]}
+              alt={property.title}
+              className="w-full h-full object-cover min-h-[300px] md:min-h-[400px]"
+            />
             <Badge className="absolute bottom-3 left-3 bg-primary text-primary-foreground border-0">{property.type}</Badge>
           </div>
           {images.slice(1, 5).map((img, i) => (
             <div key={i} className="relative hidden md:block">
-              <img src={img} alt="" className="w-full h-[195px] object-cover" onError={(e) => { (e.target as HTMLImageElement).src = DEFAULT_PROPERTY_IMAGE; }} />
+              <CachedPropertyImg src={img} alt="" className="w-full h-[195px] object-cover" />
               {i === 3 && images.length > 5 && (
                 <div className="absolute inset-0 bg-foreground/50 flex items-center justify-center">
                   <span className="text-background font-semibold text-lg">+{images.length - 5} more</span>

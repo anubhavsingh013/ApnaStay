@@ -5,23 +5,25 @@ import { useDemoData } from "./DemoDataContext";
 const SESSION_KEY = "apnastay_demo_popup_shown_this_session";
 const AUTO_DISMISS_MS = 6000;
 
+function readPopupDismissedFromSession(): boolean {
+  try {
+    return sessionStorage.getItem(SESSION_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
 const DemoModePopup = () => {
   const { demoMode, toggleDemoMode } = useDemoData();
-  const [dismissed, setDismissed] = useState(false);
+  /** Sync from session on first paint so revisiting Home doesn’t flash or re-arm the popup */
+  const [dismissed, setDismissed] = useState(readPopupDismissedFromSession);
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    try {
-      if (sessionStorage.getItem(SESSION_KEY) === "true") {
-        setDismissed(true);
-        return;
-      }
-    } catch {
-      /* ignore */
-    }
+    if (dismissed) return;
     const showTimer = setTimeout(() => setVisible(true), 800);
     return () => clearTimeout(showTimer);
-  }, []);
+  }, [dismissed]);
 
   useEffect(() => {
     if (!visible || dismissed) return;
@@ -36,6 +38,7 @@ const DemoModePopup = () => {
     return () => clearTimeout(autoDismiss);
   }, [visible, dismissed]);
 
+  if (demoMode) return null;
   if (dismissed || !visible) return null;
 
   const persistShown = () => {
@@ -58,40 +61,40 @@ const DemoModePopup = () => {
   };
 
   return (
-    <div className="fixed top-4 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-50 w-[calc(100%-2rem)] sm:max-w-md animate-fade-in">
-      <div className="bg-card border border-border rounded-xl shadow-lg p-4 flex gap-3 items-start">
-        <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-          <FlaskConical className="h-5 w-5 text-primary" />
+    <div className="fixed bottom-4 left-4 z-50 w-[min(calc(100vw-2rem),19rem)] animate-fade-in pointer-events-auto">
+      <div className="bg-card/95 backdrop-blur-sm border border-border rounded-lg shadow-lg p-2.5 flex gap-2 items-start ring-1 ring-primary/10">
+        <div className="h-8 w-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+          <FlaskConical className="h-4 w-4 text-primary" />
         </div>
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <p className="text-sm font-bold text-card-foreground">Try Demo Mode</p>
+        <div className="flex-1 min-w-0 pt-0.5">
+          <div className="flex items-start justify-between gap-1.5">
+            <p className="text-xs font-semibold text-card-foreground leading-tight">Try demo mode</p>
             <button
               type="button"
               onClick={handleDismiss}
-              className="text-muted-foreground hover:text-foreground shrink-0 p-0.5 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="text-muted-foreground hover:text-foreground shrink-0 p-0.5 rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-primary -mt-0.5"
               aria-label="Close"
             >
-              <X className="h-4 w-4" />
+              <X className="h-3.5 w-3.5" />
             </button>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Explore all features using demo mode, or wait 4–5 minutes for the backend server to come up.
+          <p className="text-[11px] text-muted-foreground mt-1 leading-snug line-clamp-2">
+            Explore the app without signing in. Dismisses automatically in a few seconds.
           </p>
-          <div className="flex flex-wrap gap-2 mt-3">
+          <div className="flex flex-wrap gap-1.5 mt-2">
             <button
               type="button"
               onClick={handleEnable}
-              className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2.5 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+              className="inline-flex items-center gap-1 rounded-md border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2 py-1 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
             >
-              <CheckCircle className="h-3.5 w-3.5" /> Enable Demo
+              <CheckCircle className="h-3 w-3" /> Enable
             </button>
             <button
               type="button"
               onClick={handleDismiss}
-              className="inline-flex items-center gap-1 rounded-full border border-slate-400/50 dark:border-slate-500/50 bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 px-2.5 py-1.5 text-xs font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/50"
+              className="inline-flex items-center gap-1 rounded-md border border-slate-400/50 dark:border-slate-500/50 bg-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/50 px-2 py-1 text-[11px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-500/50"
             >
-              <X className="h-3.5 w-3.5" /> Maybe Later
+              Later
             </button>
           </div>
         </div>

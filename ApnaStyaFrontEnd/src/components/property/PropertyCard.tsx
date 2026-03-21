@@ -5,10 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import type { Property } from "@/constants/properties";
 import { DEFAULT_PROPERTY_IMAGE } from "@/constants/properties";
 import { useAuth } from "@/contexts/AuthContext";
+import { CachedPropertyImg } from "@/components/property/CachedPropertyImg";
 
 const PropertyCard = ({ property }: { property: Property }) => {
   const [liked, setLiked] = useState(false);
-  const [imgSrc, setImgSrc] = useState(property.image || DEFAULT_PROPERTY_IMAGE);
   const navigate = useNavigate();
   const { user } = useAuth();
 
@@ -28,11 +28,10 @@ const PropertyCard = ({ property }: { property: Property }) => {
     <div className="group bg-card rounded-2xl overflow-hidden border border-border/50 hover-lift cursor-pointer" onClick={handleCardClick}>
       {/* Image */}
       <div className="relative overflow-hidden aspect-[4/3]">
-        <img
-          src={imgSrc}
+        <CachedPropertyImg
+          src={property.image || DEFAULT_PROPERTY_IMAGE}
           alt={property.title}
           className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
-          onError={() => setImgSrc(DEFAULT_PROPERTY_IMAGE)}
         />
         <button
           onClick={(e) => { e.stopPropagation(); setLiked(!liked); }}
