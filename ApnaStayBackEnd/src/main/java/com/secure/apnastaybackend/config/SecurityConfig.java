@@ -70,6 +70,8 @@ public class SecurityConfig {
 
         http.authorizeHttpRequests((requests) -> requests
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                /** SockJS + STOMP handshake; JWT validated in {@link com.secure.apnastaybackend.config.websocket.ComplaintJwtHandshakeInterceptor}. */
+                .requestMatchers("/chat", "/chat/**").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/csrf-token").permitAll()
                 .requestMatchers("/api/auth/public/**").permitAll()

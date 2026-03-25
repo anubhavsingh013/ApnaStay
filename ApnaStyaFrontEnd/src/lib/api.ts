@@ -1,3 +1,5 @@
+import { disconnectComplaintStomp } from "@/lib/complaintStompClient";
+
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "";
 
 let csrfToken: string | null = null;
@@ -41,6 +43,7 @@ export function logout() {
   clearJwt();
   clearStoredUser();
   resetCsrfClientCache();
+  disconnectComplaintStomp();
 }
 
 /** Decoded JWT payload (from backend: sub, roles, email, userId, is2faEnabled, iat, exp). Use for Account display. */
@@ -972,6 +975,7 @@ export interface ComplaintMessageDTO {
   senderId: number;
   senderUserName: string;
   messageText: string;
+  deleted?: boolean;
   createdAt: string | null;
 }
 
@@ -1056,5 +1060,33 @@ export async function sendComplaintMessage(complaintId: number, messageText: str
   return apiRequest<{ success: boolean; data: ComplaintMessageDTO; message?: string; timestamp?: string }>(
     `/api/complaints/${complaintId}/messages`,
     { method: "POST", body: { messageText } }
+  );
+}
+
+/** DELETE /api/complaints/:id/messages/:messageId — soft-delete own message (admin can delete any). */
+export async function deleteComplaintMessage(complaintId: number, messageId: number) {
+  return apiRequest<{ success: boolean; data: ComplaintMessageDTO; message?: string; timestamp?: string }>(
+    `/api/complaints/${complaintId}/messages/${messageId}`,
+    { method: "DELETE" }
+  );
+}
+
+export interface ComplaintReadReceiptDTO {
+  userName: string;
+  lastReadMessageId: number;
+}
+
+/** GET /api/complaints/:id/read-receipts */
+export async function getComplaintReadReceipts(complaintId: number) {
+  return apiRequest<{ success: boolean; data: ComplaintReadReceiptDTO[]; message?: string; timestamp?: string }>(
+    `/api/complaints/${complaintId}/read-receipts`
+  );
+}
+
+/** PUT /api/complaints/:id/read — Body: { lastReadMessageId } */
+export async function markComplaintThreadRead(complaintId: number, lastReadMessageId: number) {
+  return apiRequest<{ success: boolean; data?: string; message?: string; timestamp?: string }>(
+    `/api/complaints/${complaintId}/read`,
+    { method: "PUT", body: { lastReadMessageId } }
   );
 }

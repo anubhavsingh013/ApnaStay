@@ -6,12 +6,16 @@ import com.secure.apnastaybackend.dto.request.ComplaintRequest;
 import com.secure.apnastaybackend.dto.request.ResolveComplaintRequest;
 import com.secure.apnastaybackend.dto.response.ComplaintDTO;
 import com.secure.apnastaybackend.dto.response.ComplaintMessageDTO;
+import com.secure.apnastaybackend.dto.response.ComplaintReadReceiptDTO;
 import com.secure.apnastaybackend.entity.*;
 import com.secure.apnastaybackend.exceptions.BadRequestException;
 import com.secure.apnastaybackend.exceptions.ResourceNotFoundException;
+import com.secure.apnastaybackend.repositories.ComplaintMessageRepository;
 import com.secure.apnastaybackend.repositories.ComplaintRepository;
+import com.secure.apnastaybackend.repositories.ComplaintThreadReadRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.ComplaintMessageRealtimePublisher;
 import com.secure.apnastaybackend.services.ComplaintService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,8 +32,11 @@ import java.util.stream.Collectors;
 public class ComplaintServiceImpl implements ComplaintService {
 
     private final ComplaintRepository complaintRepository;
+    private final ComplaintMessageRepository complaintMessageRepository;
+    private final ComplaintThreadReadRepository complaintThreadReadRepository;
     private final UserRepository userRepository;
     private final PropertyRepository propertyRepository;
+    private final ComplaintMessageRealtimePublisher complaintMessageRealtimePublisher;
 
     @Override
     @Transactional
@@ -173,10 +180,31 @@ public class ComplaintServiceImpl implements ComplaintService {
         msg.setComplaint(complaint);
         msg.setSender(user);
         msg.setMessageText(request.getMessageText());
+        // Ensure DTO/socket payload always has a time (CreationTimestamp can be unset on transient entity until flush in some cases).
+        msg.setCreatedAt(java.time.LocalDateTime.now());
         complaint.getMessages().add(msg);
-        complaintRepository.save(complaint);
+        complaintRepository.saveAndFlush(complaint);
+        ComplaintMessageDTO dto = toMessageDTO(msg);
         log.info("Message added to complaint {} by {}", complaintId, userName);
-        return toMessageDTO(msg);
+        complaintMessageRealtimePublisher.publishNewMessage(complaintId, dto);
+        return dto;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean canUserAccessComplaint(String userName, Long complaintId) {
+        if (complaintId == null || userName == null || userName.isBlank()) {
+            return false;
+        }
+        Complaint complaint = complaintRepository.findById(complaintId).orElse(null);
+        if (complaint == null) {
+            return false;
+        }
+        User user = userRepository.findByUserName(userName).orElse(null);
+        if (user == null) {
+            return false;
+        }
+        return canAccessComplaint(complaint, user);
     }
 
     @Override
@@ -190,6 +218,90 @@ public class ComplaintServiceImpl implements ComplaintService {
             throw new BadRequestException("You do not have access to this complaint");
         }
         return complaint.getMessages().stream().map(this::toMessageDTO).collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public ComplaintMessageDTO deleteMessage(String userName, Long complaintId, Long messageId) {
+        ComplaintMessage msg = complaintMessageRepository.findByIdAndComplaint_Id(messageId, complaintId)
+                .orElseThrow(() -> new ResourceNotFoundException("ComplaintMessage", "id", messageId));
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+        Complaint complaint = msg.getComplaint();
+        if (!canAccessComplaint(complaint, user)) {
+            throw new BadRequestException("You do not have access to this complaint");
+        }
+        boolean isAdmin = user.getRole() != null && user.getRole().getRoleName() == AppRole.ROLE_ADMIN;
+        boolean isSender = msg.getSender() != null && msg.getSender().getUserId().equals(user.getUserId());
+        if (!isSender && !isAdmin) {
+            throw new BadRequestException("You can only delete your own messages");
+        }
+        if (msg.isDeleted()) {
+            return toMessageDTO(msg);
+        }
+        msg.setDeleted(true);
+        msg.setMessageText("");
+        complaintMessageRepository.save(msg);
+        complaintMessageRealtimePublisher.publishMessageDeleted(complaintId, messageId);
+        log.info("Complaint message {} soft-deleted on complaint {} by {}", messageId, complaintId, userName);
+        return toMessageDTO(msg);
+    }
+
+    @Override
+    @Transactional
+    public void markThreadRead(String userName, Long complaintId, Long lastReadMessageId) {
+        if (lastReadMessageId == null || lastReadMessageId <= 0) {
+            throw new BadRequestException("lastReadMessageId is required");
+        }
+        Complaint complaint = complaintRepository.findByIdWithMessages(complaintId)
+                .orElseThrow(() -> new ResourceNotFoundException("Complaint", "id", complaintId));
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+        if (!canAccessComplaint(complaint, user)) {
+            throw new BadRequestException("You do not have access to this complaint");
+        }
+        boolean messageInThread = complaint.getMessages().stream()
+                .anyMatch(m -> m.getId() != null && m.getId().equals(lastReadMessageId));
+        if (!messageInThread) {
+            throw new BadRequestException("Message does not belong to this complaint thread");
+        }
+        ComplaintThreadRead row = complaintThreadReadRepository
+                .findByComplaint_IdAndUser_UserId(complaintId, user.getUserId())
+                .orElseGet(() -> {
+                    ComplaintThreadRead r = new ComplaintThreadRead();
+                    r.setComplaint(complaint);
+                    r.setUser(user);
+                    r.setLastReadMessageId(0L);
+                    return r;
+                });
+        long prev = row.getLastReadMessageId() != null ? row.getLastReadMessageId() : 0L;
+        long merged = Math.max(prev, lastReadMessageId);
+        if (merged == prev) {
+            return;
+        }
+        row.setLastReadMessageId(merged);
+        row.setComplaint(complaint);
+        row.setUser(user);
+        complaintThreadReadRepository.save(row);
+        complaintMessageRealtimePublisher.publishReadReceipt(complaintId, userName, merged);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<ComplaintReadReceiptDTO> getThreadReadReceipts(String userName, Long complaintId) {
+        Complaint complaint = complaintRepository.findById(complaintId)
+                .orElseThrow(() -> new ResourceNotFoundException("Complaint", "id", complaintId));
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+        if (!canAccessComplaint(complaint, user)) {
+            throw new BadRequestException("You do not have access to this complaint");
+        }
+        return complaintThreadReadRepository.findByComplaint_Id(complaintId).stream()
+                .map(r -> ComplaintReadReceiptDTO.builder()
+                        .userName(r.getUser().getUserName())
+                        .lastReadMessageId(r.getLastReadMessageId())
+                        .build())
+                .collect(Collectors.toList());
     }
 
     private boolean canAccessComplaint(Complaint complaint, User user) {
@@ -238,7 +350,8 @@ public class ComplaintServiceImpl implements ComplaintService {
                 .complaintId(m.getComplaint().getId())
                 .senderId(m.getSender().getUserId())
                 .senderUserName(m.getSender().getUserName())
-                .messageText(m.getMessageText())
+                .messageText(m.isDeleted() ? "" : m.getMessageText())
+                .deleted(m.isDeleted())
                 .createdAt(m.getCreatedAt())
                 .build();
     }

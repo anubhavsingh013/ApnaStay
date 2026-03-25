@@ -7,6 +7,10 @@ export default defineConfig(({ mode }) => {
   const apiBase = env.VITE_API_BASE_URL || "http://localhost:8080";
 
   return {
+    /** sockjs-client and similar expect Node's `global` */
+    define: {
+      global: "globalThis",
+    },
     server: {
       host: "localhost",
       port: 3000,
@@ -16,6 +20,12 @@ export default defineConfig(({ mode }) => {
       proxy: {
         "/api": {
           target: apiBase,
+          changeOrigin: true,
+        },
+        /** STOMP/SockJS complaint chat — same origin in dev, forwarded to Spring on :8080 */
+        "/chat": {
+          target: apiBase,
+          ws: true,
           changeOrigin: true,
         },
       },

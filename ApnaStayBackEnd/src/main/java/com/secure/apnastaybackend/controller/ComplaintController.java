@@ -1,12 +1,14 @@
 package com.secure.apnastaybackend.controller;
 
 import com.secure.apnastaybackend.dto.request.AssignComplaintRequest;
+import com.secure.apnastaybackend.dto.request.ComplaintMarkReadRequest;
 import com.secure.apnastaybackend.dto.request.ComplaintMessageRequest;
 import com.secure.apnastaybackend.dto.request.ComplaintRequest;
 import com.secure.apnastaybackend.dto.request.ResolveComplaintRequest;
 import com.secure.apnastaybackend.dto.response.ApiResponse;
 import com.secure.apnastaybackend.dto.response.ComplaintDTO;
 import com.secure.apnastaybackend.dto.response.ComplaintMessageDTO;
+import com.secure.apnastaybackend.dto.response.ComplaintReadReceiptDTO;
 import com.secure.apnastaybackend.entity.ComplaintStatus;
 import com.secure.apnastaybackend.services.ComplaintService;
 import jakarta.validation.Valid;
@@ -108,6 +110,35 @@ public class ComplaintController {
         String username = userDetails.getUsername();
         List<ComplaintMessageDTO> messages = complaintService.getMessages(username, id);
         return ResponseEntity.ok(ApiResponse.success("Messages retrieved successfully", messages));
+    }
+
+    @DeleteMapping("/{id}/messages/{messageId}")
+    public ResponseEntity<ApiResponse<ComplaintMessageDTO>> deleteMessage(
+            @PathVariable Long id,
+            @PathVariable Long messageId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        String username = userDetails.getUsername();
+        ComplaintMessageDTO dto = complaintService.deleteMessage(username, id, messageId);
+        return ResponseEntity.ok(ApiResponse.success("Message removed", dto));
+    }
+
+    @GetMapping("/{id}/read-receipts")
+    public ResponseEntity<ApiResponse<List<ComplaintReadReceiptDTO>>> getReadReceipts(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        String username = userDetails.getUsername();
+        List<ComplaintReadReceiptDTO> list = complaintService.getThreadReadReceipts(username, id);
+        return ResponseEntity.ok(ApiResponse.success("Read receipts retrieved successfully", list));
+    }
+
+    @PutMapping("/{id}/read")
+    public ResponseEntity<ApiResponse<String>> markThreadRead(
+            @PathVariable Long id,
+            @Valid @RequestBody ComplaintMarkReadRequest request,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        String username = userDetails.getUsername();
+        complaintService.markThreadRead(username, id, request.getLastReadMessageId());
+        return ResponseEntity.ok(ApiResponse.success("Read position updated", "ok"));
     }
 }
 

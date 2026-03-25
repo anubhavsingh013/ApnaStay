@@ -6,6 +6,7 @@ import com.secure.apnastaybackend.dto.request.ComplaintRequest;
 import com.secure.apnastaybackend.dto.request.ResolveComplaintRequest;
 import com.secure.apnastaybackend.dto.response.ComplaintDTO;
 import com.secure.apnastaybackend.dto.response.ComplaintMessageDTO;
+import com.secure.apnastaybackend.dto.response.ComplaintReadReceiptDTO;
 import com.secure.apnastaybackend.entity.ComplaintStatus;
 
 import java.util.List;
@@ -28,5 +29,15 @@ public interface ComplaintService {
     ComplaintMessageDTO addMessage(String userName, Long complaintId, ComplaintMessageRequest request);
 
     List<ComplaintMessageDTO> getMessages(String userName, Long complaintId);
+
+    ComplaintMessageDTO deleteMessage(String userName, Long complaintId, Long messageId);
+
+    /** Persist read cursor and broadcast {@code complaint:readReceipt} to the room. */
+    void markThreadRead(String userName, Long complaintId, Long lastReadMessageId);
+
+    List<ComplaintReadReceiptDTO> getThreadReadReceipts(String userName, Long complaintId);
+
+    /** Used by Socket.IO to authorize joining a complaint room without loading full messages. */
+    boolean canUserAccessComplaint(String userName, Long complaintId);
 }
 

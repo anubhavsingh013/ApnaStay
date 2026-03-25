@@ -30,6 +30,9 @@ public class ComplaintMessage {
     @Column(name = "message_text", columnDefinition = "TEXT", nullable = false)
     private String messageText;
 
+    @Column(name = "deleted", nullable = false)
+    private boolean deleted = false;
+
     @CreationTimestamp
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;

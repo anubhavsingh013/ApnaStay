@@ -20,6 +20,9 @@ public class ComplaintMessageDTO {
     private String senderUserName;
     private String messageText;
 
+    /** Soft-deleted in thread; text cleared server-side. */
+    private Boolean deleted;
+
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime createdAt;
 }

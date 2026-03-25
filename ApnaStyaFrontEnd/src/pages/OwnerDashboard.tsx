@@ -15,7 +15,10 @@ import {
   getProperties,
   getComplaints,
   getComplaintMessages,
+  getComplaintReadReceipts,
+  markComplaintThreadRead,
   sendComplaintMessage,
+  deleteComplaintMessage,
   createComplaint,
   resolveComplaint,
   updateComplaintStatus as apiUpdateComplaintStatus,
@@ -38,7 +41,7 @@ import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
 import { MobileInput, parseMobileValue, formatMobileForApi } from "@/components/auth/MobileInput";
 import {
   Building2, Users, IndianRupee, Plus, User, Bell, FileText, CreditCard,
-  Trash2, Pencil, X, AlertCircle, CheckCircle, ChevronRight, Clock, Eye, MapPin, Check, XCircle, CalendarDays,
+  Trash2, Pencil, X, AlertCircle, CheckCircle, ChevronRight, ChevronLeft, Clock, Eye, MapPin, Check, XCircle, CalendarDays,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +59,11 @@ import { OwnerProfileMuiForm } from "@/components/profile/OwnerProfileMuiForm";
 import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
 import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
+import { mergeComplaintMessageList, sortComplaintMessages } from "@/lib/complaintSocket";
+import { emitComplaintRead } from "@/lib/complaintStompClient";
+import { ComplaintDetailAndChat } from "@/components/dashboard/ComplaintDetailAndChat";
+import { cn } from "@/lib/utils";
+import { useComplaintMessagesSocket } from "@/hooks/useComplaintMessagesSocket";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
@@ -191,6 +199,10 @@ const OwnerDashboard = () => {
   const [complaintMessages, setComplaintMessages] = useState<ComplaintMessageDTO[]>([]);
   const [complaintMessageText, setComplaintMessageText] = useState("");
   const [complaintMessageSending, setComplaintMessageSending] = useState(false);
+  const [complaintTypingByUser, setComplaintTypingByUser] = useState<Record<string, boolean>>({});
+  const [complaintReadReceiptsByUser, setComplaintReadReceiptsByUser] = useState<Record<string, number>>({});
+  const [complaintLiveChatOpen, setComplaintLiveChatOpen] = useState(false);
+  const [complaintMessageDeletingId, setComplaintMessageDeletingId] = useState<number | null>(null);
   const [complaintStatusUpdating, setComplaintStatusUpdating] = useState(false);
   const [statusUpdateDialog, setStatusUpdateDialog] = useState<{ open: boolean; complaintId: number | null; newStatus: ComplaintStatus | null; currentStatus: ComplaintStatus | null; message: string }>({ open: false, complaintId: null, newStatus: null, currentStatus: null, message: "" });
 
@@ -314,28 +326,108 @@ const OwnerDashboard = () => {
   useEffect(() => {
     if (!detailItem || detailItem.type !== "complaint" || !useRealApi || !("id" in detailItem.data)) return;
     const id = (detailItem.data as ComplaintDTO).id;
+    setComplaintTypingByUser({});
     getComplaintMessages(id)
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
-        if (Array.isArray(list)) setComplaintMessages(list);
+        if (Array.isArray(list)) setComplaintMessages(sortComplaintMessages(list));
       })
       .catch(() => setComplaintMessages([]));
+    getComplaintReadReceipts(id)
+      .then((res) => {
+        const list = (res as { data?: { userName: string; lastReadMessageId: number }[] }).data;
+        const map: Record<string, number> = {};
+        if (Array.isArray(list)) {
+          for (const r of list) {
+            if (r?.userName) map[r.userName] = r.lastReadMessageId;
+          }
+        }
+        setComplaintReadReceiptsByUser(map);
+      })
+      .catch(() => setComplaintReadReceiptsByUser({}));
     setComplaintMessageText("");
+    setComplaintLiveChatOpen(false);
   }, [detailItem, useRealApi]);
+
+  useEffect(() => {
+    if (detailItem?.type !== "complaint") setComplaintLiveChatOpen(false);
+  }, [detailItem?.type]);
+
+  const complaintSocketComplaintId =
+    useRealApi && user && detailItem?.type === "complaint" && detailItem.data && "id" in detailItem.data
+      ? (detailItem.data as ComplaintDTO).id
+      : null;
+
+  useComplaintMessagesSocket({
+    complaintId: complaintSocketComplaintId,
+    enabled: Boolean(useRealApi && user),
+    onMessage: (msg) => {
+      setComplaintMessages((prev) => mergeComplaintMessageList(prev, msg));
+    },
+    onTyping: (userName, typing) => {
+      setComplaintTypingByUser((prev) => ({ ...prev, [userName]: typing }));
+    },
+    onReadReceipt: (readerUserName, lastReadMessageId) => {
+      setComplaintReadReceiptsByUser((prev) => {
+        const next = { ...prev };
+        const cur = next[readerUserName] ?? 0;
+        next[readerUserName] = Math.max(cur, lastReadMessageId);
+        return next;
+      });
+    },
+    onMessageDeleted: (messageId) => {
+      setComplaintMessages((prev) =>
+        prev.map((m) => (m.id === messageId ? { ...m, deleted: true, messageText: "" } : m)),
+      );
+    },
+  });
+
+  useEffect(() => {
+    if (!useRealApi || complaintSocketComplaintId == null || !complaintLiveChatOpen) return;
+    const ids = complaintMessages.map((m) => m.id).filter((x): x is number => x != null && x > 0);
+    if (ids.length === 0) return;
+    const maxId = Math.max(...ids);
+    const t = window.setTimeout(() => {
+      void markComplaintThreadRead(complaintSocketComplaintId, maxId).catch(() => {});
+      emitComplaintRead(complaintSocketComplaintId, maxId);
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [useRealApi, complaintSocketComplaintId, complaintMessages, complaintLiveChatOpen]);
+
+  useEffect(() => {
+    if (activeTab !== "complaints" && detailItem?.type === "complaint") {
+      setDetailItem(null);
+    }
+  }, [activeTab, detailItem?.type]);
+
+  const complaintTypingNames = useMemo(() => {
+    const me = (user?.username ?? "").trim().toLowerCase();
+    return Object.entries(complaintTypingByUser)
+      .filter(([name, on]) => on && name.trim().toLowerCase() !== me)
+      .map(([name]) => name);
+  }, [complaintTypingByUser, user?.username]);
+
+  const handleDeleteComplaintMessage = (messageId: number) => {
+    if (complaintSocketComplaintId == null) return;
+    setComplaintMessageDeletingId(messageId);
+    deleteComplaintMessage(complaintSocketComplaintId, messageId)
+      .then((res) => {
+        const d = (res as { data?: ComplaintMessageDTO }).data;
+        if (d) setComplaintMessages((prev) => mergeComplaintMessageList(prev, d));
+      })
+      .catch((err) => toastError("Failed to delete message", (err as Error)?.message))
+      .finally(() => setComplaintMessageDeletingId(null));
+  };
 
   const handleSendComplaintMessage = () => {
     if (!detailItem || detailItem.type !== "complaint" || !complaintMessageText.trim()) return;
     const id = (detailItem.data as ComplaintDTO).id;
     setComplaintMessageSending(true);
     sendComplaintMessage(id, complaintMessageText.trim())
-      .then(() => {
-        setComplaintMessageText("");
-        return getComplaintMessages(id);
-      })
       .then((res) => {
-        const list = (res as { data?: ComplaintMessageDTO[] }).data;
-        if (Array.isArray(list)) setComplaintMessages(list);
-        toastSuccess("Message sent");
+        setComplaintMessageText("");
+        const d = (res as { data?: ComplaintMessageDTO }).data;
+        if (d) setComplaintMessages((prev) => mergeComplaintMessageList(prev, d));
       })
       .catch((err) => toastError("Failed to send", (err as Error)?.message))
       .finally(() => setComplaintMessageSending(false));
@@ -1143,7 +1235,7 @@ const OwnerDashboard = () => {
                         </div>
                         <div className="min-w-0">
                           <h2 className="text-lg font-bold text-foreground">My Complaints</h2>
-                          <p className="text-xs text-muted-foreground">View and manage complaints. Click a row to open details.</p>
+                          <p className="text-xs text-muted-foreground">Tap a complaint to open details. Use Open live chat at the bottom to connect in real time.</p>
                         </div>
                       </div>
                     </div>
@@ -1182,8 +1274,93 @@ const OwnerDashboard = () => {
                       </Button>
                     )}
                   </div>
+                ) : detailItem?.type === "complaint" && detailItem.data && "id" in detailItem.data ? (
+                (() => {
+                  const c = detailItem.data as ComplaintDTO & { title?: string; raisedBy?: string; againstUser?: string; propertyTitle?: string; raisedByRole?: string; againstRole?: string; adminNote?: string };
+                  const propertyTitle =
+                    myProperties.find((p) => p.id === c.propertyId)?.title ?? c.propertyTitle ?? (c.propertyId ? `Property #${c.propertyId}` : "—");
+                  const isResolved = c.status === "RESOLVED" || c.status === "CLOSED";
+                  const canResolve = (c.relatedUserName === currentOwner || c.againstUser === currentOwner) && !isResolved;
+                  return (
+                    <div className="flex min-h-[min(70vh,640px)] flex-col overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-700">
+                      <div className="flex shrink-0 items-center gap-2 border-b border-slate-200 px-3 py-2.5 dark:border-slate-700">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 shrink-0 -ml-1 px-2 text-xs"
+                          onClick={() => {
+                            setDetailItem(null);
+                            setComplaintLiveChatOpen(false);
+                          }}
+                        >
+                          <ChevronLeft className="mr-0.5 h-4 w-4" /> Back
+                        </Button>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-foreground">{c.subject ?? c.title ?? "Complaint"}</p>
+                          <p className="text-[11px] text-muted-foreground">Details — open live chat when you are ready</p>
+                        </div>
+                      </div>
+                      <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2">
+                        <ComplaintDetailAndChat
+                          c={c}
+                          propertyTitle={propertyTitle}
+                          currentUserName={user?.username ?? currentOwner}
+                          useRealApi={Boolean(useRealApi)}
+                          complaintIdForChat={complaintSocketComplaintId}
+                          messages={complaintMessages}
+                          readReceiptsByUser={complaintReadReceiptsByUser}
+                          typingUserNames={complaintTypingNames}
+                          messageText={complaintMessageText}
+                          onMessageTextChange={setComplaintMessageText}
+                          onSend={handleSendComplaintMessage}
+                          sending={complaintMessageSending}
+                          liveChatOpen={complaintLiveChatOpen}
+                          onOpenLiveChat={() => setComplaintLiveChatOpen(true)}
+                          onCloseLiveChat={() => setComplaintLiveChatOpen(false)}
+                          onDeleteMessage={handleDeleteComplaintMessage}
+                          deletingMessageId={complaintMessageDeletingId}
+                          actionsSlot={
+                            useRealApi ? (
+                              <div className="rounded-lg border border-slate-200 bg-muted/20 p-4 space-y-3 dark:border-slate-700">
+                                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Actions</p>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <ComplaintDetailStatusButtons
+                                    currentStatus={c.status}
+                                    disabled={complaintStatusUpdating}
+                                    onChange={(newStatus) => {
+                                      if (newStatus !== c.status) {
+                                        setStatusUpdateDialog({ open: true, complaintId: c.id, newStatus, currentStatus: c.status, message: "" });
+                                      }
+                                    }}
+                                  />
+                                  {canResolve && (
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      className="h-8 border-emerald-500/50 text-xs text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                                      onClick={() => {
+                                        setResolveDialog({ open: true, id: c.id });
+                                        setDetailItem(null);
+                                        setComplaintLiveChatOpen(false);
+                                      }}
+                                    >
+                                      <CheckCircle className="mr-1 h-3.5 w-3.5" />
+                                      Resolve
+                                    </Button>
+                                  )}
+                                </div>
+                                {complaintStatusUpdating && <p className="text-xs text-muted-foreground">Updating…</p>}
+                              </div>
+                            ) : undefined
+                          }
+                        />
+                      </div>
+                    </div>
+                  );
+                })()
                 ) : (
-                <div className="space-y-3">
+                <div className="max-h-[min(72vh,720px)] space-y-3 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
                   {myComplaints.map((c) => {
                     const title = (c as ComplaintDTO & { title?: string }).subject ?? (c as Complaint).title;
                     const against = (c as ComplaintDTO).relatedUserName ?? (c as Complaint).againstUser;
@@ -1200,7 +1377,9 @@ const OwnerDashboard = () => {
                         tabIndex={0}
                         onClick={() => setDetailItem({ type: "complaint", data: c })}
                         onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setDetailItem({ type: "complaint", data: c }); } }}
-                        className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-4 shadow-sm hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all cursor-pointer active:scale-[0.995]"
+                        className={cn(
+                          "bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-4 shadow-sm hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all cursor-pointer active:scale-[0.995]",
+                        )}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0 flex-1">
@@ -1540,134 +1719,14 @@ const OwnerDashboard = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Detail View Dialog */}
-      <Dialog open={!!detailItem} onOpenChange={(open) => { if (!open) setDetailItem(null); }}>
+      {/* Detail View Dialog (complaints open inline on the Complaints tab) */}
+      <Dialog open={Boolean(detailItem && detailItem.type !== "complaint")} onOpenChange={(open) => { if (!open) setDetailItem(null); }}>
         <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>
-              {detailItem?.type === "request" ? "Request Details" : detailItem?.type === "complaint" ? "Complaint Details" : "Payment Details"}
+              {detailItem?.type === "request" ? "Request Details" : "Payment Details"}
             </DialogTitle>
           </DialogHeader>
-          {detailItem?.type === "complaint" && (() => {
-            const c = detailItem.data as ComplaintDTO & { title?: string; raisedBy?: string; againstUser?: string; propertyTitle?: string; raisedByRole?: string; againstRole?: string; adminNote?: string };
-            const subject = c.subject ?? c.title ?? "";
-            const raisedBy = c.raisedByUserName ?? c.raisedBy ?? "";
-            const related = c.relatedUserName ?? c.againstUser ?? "";
-            const propertyTitle = myProperties.find((p) => p.id === c.propertyId)?.title ?? c.propertyTitle ?? (c.propertyId ? `Property #${c.propertyId}` : "—");
-            const isResolved = c.status === "RESOLVED" || c.status === "CLOSED";
-            const statusCls = c.status === "OPEN" ? "bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200" : c.status === "IN_PROGRESS" ? "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200" : "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200";
-            const priorityCls = c.priority === "HIGH" ? "bg-rose-100 text-rose-800" : c.priority === "MEDIUM" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700";
-            const canResolve = (c.relatedUserName === currentOwner || c.againstUser === currentOwner) && !isResolved;
-            return (
-              <div className="space-y-4 py-2">
-                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Summary</p>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{subject || "No subject"}</p>
-                    <p className="text-sm text-muted-foreground mt-2 leading-relaxed">{c.description || "—"}</p>
-                  </div>
-                </div>
-                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">People & property</p>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
-                    <div><span className="text-muted-foreground">Raised by</span><p className="font-medium text-foreground">{raisedBy || "—"}</p></div>
-                    <div><span className="text-muted-foreground">Related to</span><p className="font-medium text-foreground">{related || "—"}</p></div>
-                    {c.assignedToUserName && <div className="sm:col-span-2"><span className="text-muted-foreground">Assigned to</span><p className="font-medium text-foreground">{c.assignedToUserName}</p></div>}
-                    <div className="sm:col-span-2"><span className="text-muted-foreground">Property</span><p className="font-medium text-foreground">{propertyTitle}</p></div>
-                  </div>
-                </div>
-                <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
-                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status & dates</p>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Status</span>
-                      {isResolved ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300 mt-0.5">
-                          <CheckCircle className="h-3.5 w-3.5" /> {c.status}
-                        </span>
-                      ) : c.status === "OPEN" ? (
-                        <span className="inline-flex items-center gap-1 rounded-md border-2 border-rose-500/60 bg-rose-50/80 dark:bg-rose-950/30 px-2 py-0.5 text-[10px] font-medium text-rose-700 dark:text-rose-300 mt-0.5">
-                          {c.status}
-                        </span>
-                      ) : c.status === "IN_PROGRESS" ? (
-                        <span className="inline-flex items-center gap-1.5 rounded-md border-2 border-amber-500/60 bg-amber-50/80 dark:bg-amber-950/30 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300 mt-0.5">
-                          <Clock className="h-3.5 w-3.5 shrink-0" /> In progress
-                        </span>
-                      ) : (
-                        <Badge variant="outline" className={`${statusCls} mt-0.5`}>{c.status}</Badge>
-                      )}
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Priority</span>
-                      <Badge variant="outline" className={`${priorityCls} mt-0.5`}>{c.priority}</Badge>
-                    </div>
-                    <div>
-                      <span className="text-xs text-muted-foreground block">Created</span>
-                      <p className="text-sm font-medium">{new Date(c.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
-                    </div>
-                  </div>
-                </div>
-                {(c.resolutionNote || c.adminNote) && (
-                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-2">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Resolution & notes</p>
-                    {c.resolutionNote && <div><span className="text-xs text-muted-foreground">Resolution note</span><p className="text-sm text-foreground mt-0.5">{c.resolutionNote}</p></div>}
-                    {c.adminNote && <div><span className="text-xs text-muted-foreground">Admin note</span><p className="text-sm text-foreground mt-0.5">{c.adminNote}</p></div>}
-                  </div>
-                )}
-                {/* Actions: Update status & Resolve (when assignee / owner) */}
-                {useRealApi && (
-                  <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-4 space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Actions</p>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <ComplaintDetailStatusButtons
-                        currentStatus={c.status}
-                        disabled={complaintStatusUpdating}
-                        onChange={(newStatus) => {
-                          if (newStatus !== c.status) {
-                            setStatusUpdateDialog({ open: true, complaintId: c.id, newStatus, currentStatus: c.status, message: "" });
-                          }
-                        }}
-                      />
-                      {canResolve && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-8 text-xs border-emerald-500/50 text-emerald-600 hover:bg-emerald-50 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
-                          onClick={() => {
-                            setResolveDialog({ open: true, id: c.id });
-                            setDetailItem(null);
-                          }}
-                        >
-                          <CheckCircle className="h-3.5 w-3.5 mr-1" />
-                          Resolve
-                        </Button>
-                      )}
-                    </div>
-                    {complaintStatusUpdating && <p className="text-xs text-muted-foreground">Updating…</p>}
-                  </div>
-                )}
-                {useRealApi && (
-                  <div className="border-t border-slate-200 dark:border-slate-700 pt-4 space-y-3">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Messages</p>
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {complaintMessages.length === 0 && <p className="text-xs text-muted-foreground">No messages yet.</p>}
-                      {complaintMessages.map((m) => (
-                        <div key={m.id ?? m.createdAt ?? m.messageText} className="rounded-lg bg-muted/50 p-3 text-sm border border-slate-200/50 dark:border-slate-700/50">
-                          <p className="font-medium text-xs text-muted-foreground">{m.senderUserName}</p>
-                          <p className="mt-0.5 text-foreground">{m.messageText}</p>
-                          {m.createdAt && <p className="text-[10px] text-muted-foreground mt-1">{new Date(m.createdAt).toLocaleString()}</p>}
-                        </div>
-                      ))}
-                    </div>
-                    <form onSubmit={(e) => { e.preventDefault(); handleSendComplaintMessage(); }} className="flex gap-2">
-                      <Input value={complaintMessageText} onChange={(e) => setComplaintMessageText(e.target.value)} placeholder="Type a message..." className="flex-1" />
-                      <Button type="submit" size="sm" disabled={!complaintMessageText.trim() || complaintMessageSending}>{complaintMessageSending ? "Sending…" : "Send"}</Button>
-                    </form>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
           {detailItem?.type === "request" && (() => {
             const b = detailItem.data;
             return (
