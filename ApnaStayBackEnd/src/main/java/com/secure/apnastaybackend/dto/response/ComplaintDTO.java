@@ -29,6 +29,7 @@ public class ComplaintDTO {
     private String description;
     private ComplaintStatus status;
     private ComplaintPriority priority;
+    private String category;
     private String resolutionNote;
 
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
@@ -41,6 +42,10 @@ public class ComplaintDTO {
 
     @JsonFormat(shape = JsonFormat.Shape.STRING, pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime updatedAt;
+    private LocalDateTime firstResponseAt;
+    private LocalDateTime responseDueAt;
+    private LocalDateTime resolutionDueAt;
+    private Integer csatScore;
 
     private List<ComplaintMessageDTO> messages;
 }

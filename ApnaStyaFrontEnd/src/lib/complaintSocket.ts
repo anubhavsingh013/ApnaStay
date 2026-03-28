@@ -105,24 +105,59 @@ export function sortComplaintMessages(list: ComplaintMessageDTO[]): ComplaintMes
   });
 }
 
+/** Drop soft-deleted messages from chat UI (unsend / Instagram-style — no “deleted” placeholder). */
+export function complaintMessagesForDisplay(list: ComplaintMessageDTO[]): ComplaintMessageDTO[] {
+  return list.filter((m) => !m.deleted);
+}
+
 export function mergeComplaintMessageList(prev: ComplaintMessageDTO[], msg: ComplaintMessageDTO): ComplaintMessageDTO[] {
+  const asNum = (v: unknown): number | null => {
+    if (typeof v === "number" && Number.isFinite(v)) return v;
+    if (typeof v === "string" && v.trim()) {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : null;
+    }
+    return null;
+  };
+  if (msg.deleted && msg.id != null && msg.id > 0) {
+    const msgId = asNum(msg.id);
+    return sortComplaintMessages(prev.filter((m) => asNum(m.id) !== msgId));
+  }
   const hasRealId = msg.id != null && msg.id > 0;
   if (hasRealId) {
-    const idx = prev.findIndex((m) => m.id != null && m.id === msg.id);
+    const msgId = asNum(msg.id);
+    const idx = prev.findIndex((m) => asNum(m.id) === msgId);
     if (idx >= 0) {
       const next = [...prev];
       next[idx] = { ...next[idx], ...msg };
+      if (next[idx].deleted) {
+        return sortComplaintMessages(next.filter((m) => m.id !== msg.id));
+      }
+      return sortComplaintMessages(next);
+    }
+    // Reconcile optimistic local message (id=null) with server-confirmed one.
+    const optimisticIdx = [...prev]
+      .reverse()
+      .findIndex((m) => {
+        if (m.id != null) return false;
+        if ((m.messageText ?? "") !== (msg.messageText ?? "")) return false;
+        const sameSenderId = m.senderId > 0 && msg.senderId > 0 && m.senderId === msg.senderId;
+        const sameSenderName = (m.senderUserName ?? "").trim().toLowerCase() === (msg.senderUserName ?? "").trim().toLowerCase();
+        return sameSenderId || sameSenderName;
+      });
+    if (optimisticIdx >= 0) {
+      const realIdx = prev.length - 1 - optimisticIdx;
+      const next = [...prev];
+      next[realIdx] = { ...next[realIdx], ...msg };
+      if (next[realIdx].deleted) {
+        return sortComplaintMessages(next.filter((m) => m.id !== msg.id));
+      }
       return sortComplaintMessages(next);
     }
   }
-  if (msg.id == null || msg.id === 0) {
-    const dup = prev.some(
-      (m) =>
-        m.messageText === msg.messageText &&
-        m.senderUserName === msg.senderUserName &&
-        String(m.createdAt ?? "") === String(msg.createdAt ?? ""),
-    );
-    if (dup) return prev;
+  /** Do not dedupe by text/sender/time — identical bodies in the same second are valid; empty createdAt made false dup matches. */
+  if (msg.deleted) {
+    return sortComplaintMessages(prev);
   }
   return sortComplaintMessages([...prev, msg]);
 }

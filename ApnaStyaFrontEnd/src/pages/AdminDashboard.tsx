@@ -37,6 +37,10 @@ import {
   markComplaintThreadRead,
   sendComplaintMessage,
   deleteComplaintMessage,
+  getIncomingRentalApplicationsForOwner,
+  getMyLeases,
+  getLeasePayments,
+  getAuditLogs,
   assignComplaint,
   resolveComplaint,
   updateComplaintStatus as apiUpdateComplaintStatus,
@@ -49,12 +53,20 @@ import {
   type ComplaintDTO,
   type ComplaintStatus,
   type ComplaintMessageDTO,
+  type RentalApplicationDTO,
+  type LeaseDTO,
+  type LeasePaymentDTO,
+  type AuditLogDTO,
   getDecodedToken,
 } from "@/lib/api";
 import { EMPTY_PROPERTY_FORM, DESCRIPTION_MAX_LENGTH } from "@/utils/propertyConstants";
 import { PropertyFormMuiFields } from "@/components/dashboard/PropertyFormMuiFields";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
-import { mergeComplaintMessageList, sortComplaintMessages } from "@/lib/complaintSocket";
+import {
+  complaintMessagesForDisplay,
+  mergeComplaintMessageList,
+  sortComplaintMessages,
+} from "@/lib/complaintSocket";
 import { emitComplaintRead } from "@/lib/complaintStompClient";
 import { ComplaintDetailAndChat } from "@/components/dashboard/ComplaintDetailAndChat";
 import { cn } from "@/lib/utils";
@@ -86,10 +98,12 @@ const tabs = [
   { label: "Users", icon: Users, id: "users" },
   { label: "Properties", icon: Building2, id: "properties" },
   { label: "Profile reviews", icon: Eye, id: "requests" },
+  { label: "Rent requests", icon: UserPlus, id: "incoming-requests" },
   { label: "Complaints", icon: FileText, id: "complaints" },
   { label: "Payments", icon: IndianRupee, id: "payments" },
   { label: "Alerts", icon: Bell, id: "notifications" },
   { label: "Roles", icon: ShieldCheck, id: "roles" },
+  { label: "Audit Logs", icon: Clock, id: "audit-logs" },
 ];
 
 const adminMuiTheme = createTheme({ palette: { mode: "light", primary: { main: "#0284c7" } } });
@@ -192,6 +206,16 @@ const AdminDashboard = () => {
   const [complaintReadReceiptsByUser, setComplaintReadReceiptsByUser] = useState<Record<string, number>>({});
   const [complaintLiveChatOpen, setComplaintLiveChatOpen] = useState(false);
   const [complaintMessageDeletingId, setComplaintMessageDeletingId] = useState<number | null>(null);
+  const [rentalApplications, setRentalApplications] = useState<RentalApplicationDTO[]>([]);
+  const [allLeases, setAllLeases] = useState<LeaseDTO[]>([]);
+  const [allLeasePayments, setAllLeasePayments] = useState<LeasePaymentDTO[]>([]);
+  const [rentalLoading, setRentalLoading] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<AuditLogDTO[]>([]);
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditPage, setAuditPage] = useState(1);
+  const [incomingPage, setIncomingPage] = useState(1);
+  const [incomingSearchQuery, setIncomingSearchQuery] = useState("");
+  const [incomingStatusFilter, setIncomingStatusFilter] = useState<string | null>(null);
   const [complaintStatusUpdating, setComplaintStatusUpdating] = useState(false);
   const [statusUpdateDialog, setStatusUpdateDialog] = useState<{ open: boolean; complaintId: number | null; newStatus: ComplaintStatus | null; currentStatus: ComplaintStatus | null; message: string }>({ open: false, complaintId: null, newStatus: null, currentStatus: null, message: "" });
   const [assignDialog, setAssignDialog] = useState<{ open: boolean; complaintId: number | null; assignToUserId: number }>({ open: false, complaintId: null, assignToUserId: 0 });
@@ -291,6 +315,55 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     if (!useRealApi) return;
+    if (activeTab !== "payments" && activeTab !== "requests" && activeTab !== "incoming-requests" && activeTab !== "overview") return;
+    setRentalLoading(true);
+    Promise.all([getIncomingRentalApplicationsForOwner(), getMyLeases()])
+      .then(async ([appsRes, leasesRes]) => {
+        const apps = (appsRes as { data?: RentalApplicationDTO[] }).data;
+        const leases = (leasesRes as { data?: LeaseDTO[] }).data;
+        const safeLeases = Array.isArray(leases) ? leases : [];
+        setRentalApplications(Array.isArray(apps) ? apps : []);
+        setAllLeases(safeLeases);
+        const paymentsNested = await Promise.all(
+          safeLeases.map((l) =>
+            getLeasePayments(l.id)
+              .then((r) => ((r as { data?: LeasePaymentDTO[] }).data ?? []))
+              .catch(() => [] as LeasePaymentDTO[])
+          )
+        );
+        setAllLeasePayments(paymentsNested.flat());
+      })
+      .catch(() => {
+        setRentalApplications([]);
+        setAllLeases([]);
+        setAllLeasePayments([]);
+      })
+      .finally(() => setRentalLoading(false));
+  }, [useRealApi, activeTab]);
+
+  useEffect(() => {
+    if (!useRealApi || activeTab !== "audit-logs") return;
+    setAuditLoading(true);
+    getAuditLogs()
+      .then((rows) => setAuditLogs(Array.isArray(rows) ? rows : []))
+      .catch(() => setAuditLogs([]))
+      .finally(() => setAuditLoading(false));
+  }, [useRealApi, activeTab]);
+
+  useEffect(() => {
+    setAuditPage(1);
+  }, [activeTab, auditLogs.length]);
+
+  useEffect(() => {
+    setIncomingPage(1);
+  }, [activeTab, rentalApplications.length]);
+
+  useEffect(() => {
+    setIncomingPage(1);
+  }, [incomingSearchQuery, incomingStatusFilter]);
+
+  useEffect(() => {
+    if (!useRealApi) return;
     get2faStatus()
       .then((res) => setAccount2faEnabled(res.is2faEnabled))
       .catch(() => setAccount2faEnabled(false));
@@ -303,7 +376,8 @@ const AdminDashboard = () => {
     getComplaintMessages(id)
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
-        if (Array.isArray(list)) setComplaintMessages(sortComplaintMessages(list));
+        if (Array.isArray(list))
+          setComplaintMessages(sortComplaintMessages(complaintMessagesForDisplay(list)));
       })
       .catch(() => setComplaintMessages([]));
     getComplaintReadReceipts(id)
@@ -333,7 +407,7 @@ const AdminDashboard = () => {
 
   useComplaintMessagesSocket({
     complaintId: complaintSocketComplaintId,
-    enabled: Boolean(useRealApi && user),
+    enabled: Boolean(useRealApi && user && complaintLiveChatOpen && complaintSocketComplaintId != null),
     onMessage: (msg) => {
       setComplaintMessages((prev) => mergeComplaintMessageList(prev, msg));
     },
@@ -349,15 +423,22 @@ const AdminDashboard = () => {
       });
     },
     onMessageDeleted: (messageId) => {
-      setComplaintMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, deleted: true, messageText: "" } : m)),
-      );
+      setComplaintMessages((prev) => prev.filter((m) => m.id !== messageId));
     },
   });
 
   useEffect(() => {
     if (!useRealApi || complaintSocketComplaintId == null || !complaintLiveChatOpen) return;
-    const ids = complaintMessages.map((m) => m.id).filter((x): x is number => x != null && x > 0);
+    const myId = decodedToken?.userId ?? null;
+    const myName = (user?.username ?? displayName).trim().toLowerCase();
+    const ids = complaintMessages
+      .filter((m) => {
+        const mid = m.id;
+        if (mid == null || mid <= 0) return false;
+        if (myId != null && myId > 0) return m.senderId !== myId;
+        return (m.senderUserName ?? "").trim().toLowerCase() !== myName;
+      })
+      .map((m) => m.id as number);
     if (ids.length === 0) return;
     const maxId = Math.max(...ids);
     const t = window.setTimeout(() => {
@@ -529,7 +610,20 @@ const AdminDashboard = () => {
 
   const adminAlertsList = demoMode ? [] : notifications.filter(n => n.targetRole === "ADMIN" || n.targetUser === "admin_user");
   const unreadCount = adminAlertsList.filter(n => !n.read).length;
-  const displayPayments = demoMode ? [] : payments;
+  const displayPayments = useRealApi
+    ? allLeasePayments.map((p) => {
+        const lease = allLeases.find((l) => l.id === p.leaseId);
+        return {
+          id: p.id,
+          propertyTitle: lease?.propertyTitle ?? `Lease #${p.leaseId}`,
+          tenantName: lease?.tenantUserName ?? "-",
+          ownerName: lease?.ownerUserName ?? "-",
+          month: p.periodMonth,
+          amount: Number(p.amountDue ?? 0),
+          status: p.status,
+        };
+      })
+    : (demoMode ? [] : payments);
   const propertiesList = useRealApi ? apiProperties : properties;
   const pendingProperties = propertiesList.filter((p: PropertyDTO) => p.status === "PENDING");
   const filteredPropertiesList = (() => {
@@ -571,6 +665,30 @@ const AdminDashboard = () => {
     APPROVED: filteredProfiles.filter(p => getProfileDisplay(p).status === "APPROVED"),
     REJECTED: filteredProfiles.filter(p => getProfileDisplay(p).status === "REJECTED"),
   };
+  const sortedAuditLogs = auditLogs
+    .slice()
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  const auditPageSize = 10;
+  const auditTotalPages = Math.max(1, Math.ceil(sortedAuditLogs.length / auditPageSize));
+  const pagedAuditLogs = sortedAuditLogs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
+  const incomingPageSize = 8;
+  const pendingIncomingCount = rentalApplications.filter((a) => a.status === "PENDING").length;
+  const filteredIncomingApps = rentalApplications
+    .filter((a) => (incomingStatusFilter ? a.status === incomingStatusFilter : true))
+    .filter((a) => {
+      const q = incomingSearchQuery.trim().toLowerCase();
+      if (!q) return true;
+      return (
+        (a.propertyTitle ?? "").toLowerCase().includes(q) ||
+        (a.tenantUserName ?? "").toLowerCase().includes(q) ||
+        (a.ownerUserName ?? "").toLowerCase().includes(q)
+      );
+    });
+  const incomingTotalPages = Math.max(1, Math.ceil(filteredIncomingApps.length / incomingPageSize));
+  const pagedIncomingApps = filteredIncomingApps
+    .slice()
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice((incomingPage - 1) * incomingPageSize, incomingPage * incomingPageSize);
 
   const openPropertyAdd = () => {
     setEditingProperty(null);
@@ -943,10 +1061,20 @@ const AdminDashboard = () => {
       setComplaintMessageText("");
       return;
     }
+    const trimmed = complaintMessageText.trim();
+    const optimistic: ComplaintMessageDTO = {
+      id: null,
+      complaintId: id,
+      senderId: decodedToken?.userId ?? 0,
+      senderUserName: user?.username ?? displayName,
+      messageText: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setComplaintMessages((prev) => mergeComplaintMessageList(prev, optimistic));
+    setComplaintMessageText("");
     setComplaintMessageSending(true);
-    sendComplaintMessage(id, complaintMessageText.trim())
+    sendComplaintMessage(id, trimmed)
       .then((res) => {
-        setComplaintMessageText("");
         const d = (res as { data?: ComplaintMessageDTO }).data;
         if (d) setComplaintMessages((prev) => mergeComplaintMessageList(prev, d));
       })
@@ -1040,12 +1168,13 @@ const AdminDashboard = () => {
 
         <div data-demo-allow className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
               <t.icon className="h-3.5 w-3.5" />{t.label}
               {t.id === "properties" && pendingProperties.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingProperties.length}</span>}
               {t.id === "notifications" && unreadCount > 0 && <span className="bg-destructive text-destructive-foreground text-[10px] rounded-full px-1.5 font-medium">{unreadCount}</span>}
               {t.id === "requests" && pendingProfiles.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingProfiles.length}</span>}
+              {t.id === "incoming-requests" && pendingIncomingCount > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingIncomingCount}</span>}
             </button>
           ))}
         </div>
@@ -1062,12 +1191,13 @@ const AdminDashboard = () => {
               </div>
               <div className="space-y-0.5">
                 {tabs.map((t) => (
-                  <button key={t.id} onClick={() => setActiveTab(t.id)}
+                  <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-sky-300 dark:border-sky-600/60 bg-sky-50/80 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
                     <t.icon className="h-4 w-4 shrink-0" />{t.label}
                     {t.id === "properties" && pendingProperties.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingProperties.length}</span>}
                     {t.id === "notifications" && unreadCount > 0 && <span className="ml-auto bg-destructive text-destructive-foreground text-xs rounded-full px-1.5 py-0.5 font-medium">{unreadCount}</span>}
                     {t.id === "requests" && pendingProfiles.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingProfiles.length}</span>}
+                    {t.id === "incoming-requests" && pendingIncomingCount > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingIncomingCount}</span>}
                   </button>
                 ))}
               </div>
@@ -1084,7 +1214,7 @@ const AdminDashboard = () => {
                     { icon: FileText, label: "Total Complaints", value: complaintsListAll.length, sub: openComplaints.length > 0 ? `${openComplaints.length} open` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "complaints" },
                     { icon: Eye, label: "Profile reviews", value: allProfilesList.length, sub: pendingProfiles.length > 0 ? `${pendingProfiles.length} to review` : null, iconBg: "bg-violet-100 dark:bg-violet-900/30", iconColor: "text-violet-600 dark:text-violet-400", tab: "requests" },
                   ].map(s => (
-                    <button key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
+                    <button type="button" key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
                       <div className="flex items-center justify-between mb-2">
                         <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${s.iconBg}`}><s.icon className={`h-4 w-4 ${s.iconColor}`} /></div>
                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1095,22 +1225,6 @@ const AdminDashboard = () => {
                     </button>
                   ))}
                 </div>
-                {pendingProperties.length > 0 && !demoMode && (
-                  <div className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
-                    <h2 className="text-base font-bold text-foreground mb-3">Recent Pending Approvals</h2>
-                    <div className="space-y-2">
-                      {pendingProperties.slice(0, 3).map(p => (
-                        <div key={p.id} className="bg-muted/30 dark:bg-muted/20 rounded-lg border border-border/40 p-3 flex items-center justify-between gap-3">
-                          <div className="min-w-0"><p className="text-sm font-semibold text-card-foreground truncate">{p.title}</p><p className="text-xs text-muted-foreground">{p.ownerUserName} • {p.city}</p></div>
-                          <div className="flex gap-2 shrink-0">
-                            <Button size="sm" variant="outline" className="h-8 text-xs border-emerald-500/50 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20" onClick={() => handleApproveProperty(p)}><CheckCircle className="h-3.5 w-3.5 mr-1" /> Approve</Button>
-                            <Button size="sm" variant="outline" className="h-8 text-xs border-red-500/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20" onClick={() => handleRejectProperty(p)}><XCircle className="h-3.5 w-3.5 mr-1" /> Reject</Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
                 {openComplaints.length > 0 && (
                   <div className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                     <h2 className="text-base font-bold text-foreground mb-3">Recent Complaints</h2>
@@ -1417,6 +1531,7 @@ const AdminDashboard = () => {
                     </div>
                   </div>
                 </div>
+                
                 {profilesLoading ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <p className="text-sm text-muted-foreground">Loading requests…</p>
@@ -1604,6 +1719,93 @@ const AdminDashboard = () => {
               </div>
             )}
 
+            {activeTab === "incoming-requests" && (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 sm:p-5">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-9 w-9 rounded-lg bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center">
+                          <UserPlus className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-foreground">Rent requests</h2>
+                          <p className="text-xs text-muted-foreground">Review rent requests in the same flow as profile reviews.</p>
+                        </div>
+                      </div>
+                      <div className="relative w-full sm:w-64">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                        <Input
+                          placeholder="Search by property or tenant..."
+                          className="pl-10 h-9 bg-background"
+                          value={incomingSearchQuery}
+                          onChange={(e) => setIncomingSearchQuery(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select value={incomingStatusFilter ?? "__all__"} onValueChange={(v) => setIncomingStatusFilter(v === "__all__" ? null : v)}>
+                        <SelectTrigger className="w-[140px] max-w-[140px] h-9 text-sm bg-background">
+                          <SelectValue placeholder="Filter by status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">All ({filteredIncomingApps.length})</SelectItem>
+                          <SelectItem value="PENDING">Pending ({rentalApplications.filter((a) => a.status === "PENDING").length})</SelectItem>
+                          <SelectItem value="APPROVED">Approved ({rentalApplications.filter((a) => a.status === "APPROVED").length})</SelectItem>
+                          <SelectItem value="REJECTED">Rejected ({rentalApplications.filter((a) => a.status === "REJECTED").length})</SelectItem>
+                          <SelectItem value="CANCELLED">Cancelled ({rentalApplications.filter((a) => a.status === "CANCELLED").length})</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+                {rentalLoading && useRealApi ? (
+                  <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+                    <p className="text-sm text-muted-foreground">Loading requests...</p>
+                  </div>
+                ) : filteredIncomingApps.length === 0 ? (
+                  <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+                    <UserPlus className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-foreground">No incoming rent requests match filters</p>
+                    <p className="text-xs text-muted-foreground mt-1">Try changing search or status filter.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {pagedIncomingApps.map((a) => (
+                      <div key={a.id} className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-card-foreground">{a.propertyTitle}</p>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">{a.tenantUserName} → {a.ownerUserName} • Move-in {new Date(a.moveInDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">₹{Number(a.proposedRent ?? 0).toLocaleString()} for {a.leaseMonths} months</p>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <Badge variant={a.status === "APPROVED" ? "default" : a.status === "PENDING" ? "secondary" : "destructive"} className="text-[10px]">
+                              {a.status}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                          <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setActiveTab("payments")}>
+                            <IndianRupee className="h-3.5 w-3.5 mr-1" /> Open payments
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                    <div className="mt-3 flex items-center justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={incomingPage <= 1} onClick={() => setIncomingPage((p) => Math.max(1, p - 1))}>
+                        <ChevronLeft className="h-4 w-4" /> Prev
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Page {incomingPage} of {incomingTotalPages}</span>
+                      <Button type="button" variant="outline" size="sm" disabled={incomingPage >= incomingTotalPages} onClick={() => setIncomingPage((p) => Math.min(incomingTotalPages, p + 1))}>
+                        Next <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {activeTab === "complaints" && (
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
@@ -1655,10 +1857,11 @@ const AdminDashboard = () => {
                       </div>
                       <div className="flex min-h-0 flex-1 flex-col px-3 pb-3 pt-2">
                         <ComplaintDetailAndChat
-                          c={c}
-                          propertyTitle={propertyTitle}
-                          currentUserName={user?.username ?? displayName}
-                          useRealApi={Boolean(useRealApi)}
+                                c={c}
+                                propertyTitle={propertyTitle}
+                                currentUserName={user?.username ?? displayName}
+                                currentUserId={decodedToken?.userId ?? null}
+                                useRealApi={Boolean(useRealApi)}
                           complaintIdForChat={complaintSocketComplaintId}
                           messages={complaintMessages}
                           readReceiptsByUser={complaintReadReceiptsByUser}
@@ -1797,11 +2000,13 @@ const AdminDashboard = () => {
                     </div>
                     <div>
                       <h2 className="text-lg font-bold text-foreground">All Payments</h2>
-                      <p className="text-xs text-muted-foreground mt-0.5">Click a row to view details.</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{useRealApi ? `Rental apps: ${rentalApplications.length} | Click a row to view details.` : "Click a row to view details."}</p>
                     </div>
                   </div>
                 </div>
-                {displayPayments.length === 0 ? (
+                {rentalLoading && useRealApi ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">Loading payments...</div>
+                ) : displayPayments.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <IndianRupee className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
                     <p className="text-sm font-medium text-foreground">No payments yet</p>
@@ -1861,6 +2066,59 @@ const AdminDashboard = () => {
                     );
                   })}
                 </div>
+              </div>
+            )}
+
+            {activeTab === "audit-logs" && (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
+                  <h2 className="text-lg font-bold text-foreground">Audit Logs</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">All critical actions recorded from backend services.</p>
+                </div>
+                {auditLoading ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">Loading audit logs...</div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+                    <Clock className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
+                    <p className="text-sm font-medium text-foreground">No audit logs found</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 dark:bg-slate-800/60">
+                          <tr>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">When</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">User</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Action</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Property</th>
+                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Details</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {pagedAuditLogs.map((l) => (
+                            <tr key={l.id} className="border-t border-slate-200 dark:border-slate-700">
+                              <td className="px-3 py-2 whitespace-nowrap">{new Date(l.timestamp).toLocaleString()}</td>
+                              <td className="px-3 py-2">{l.username || "—"}</td>
+                              <td className="px-3 py-2">{l.action}</td>
+                              <td className="px-3 py-2">{l.propertyId != null ? `#${l.propertyId}` : "—"}</td>
+                              <td className="px-3 py-2 max-w-[380px] truncate" title={l.propertyContent ?? ""}>{l.propertyContent || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button type="button" variant="outline" size="sm" disabled={auditPage <= 1} onClick={() => setAuditPage((p) => Math.max(1, p - 1))}>
+                        <ChevronLeft className="h-4 w-4" /> Prev
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Page {auditPage} of {auditTotalPages}</span>
+                      <Button type="button" variant="outline" size="sm" disabled={auditPage >= auditTotalPages} onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}>
+                        Next <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { properties, mapPropertyDtoToProperty, DEFAULT_PROPERTY_IMAGE, type Property } from "@/constants/properties";
 import { CachedPropertyImg } from "@/components/property/CachedPropertyImg";
-import { getPropertyById, getPublicPropertyById } from "@/lib/api";
+import { createPropertyReview, createRentalApplication, getPropertyById, getPropertyReviews, getPublicPropertyById, getSimilarPublicProperties, removeSavedProperty, saveProperty, type PropertyReviewDTO } from "@/lib/api";
 import { useDemoData } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
@@ -14,14 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar } from "@/components/ui/calendar";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { DatePickerCalendar } from "@/components/common/DatePickerCalendar";
 import { toastSuccess, toastError } from "@/lib/app-toast";
 import { cn } from "@/lib/utils";
 import {
   ArrowLeft, MapPin, Star, Heart, Share2, Bed, Bath, Maximize,
-  Sofa, MessageSquare, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X,
-  Shield, Clock, Navigation, IndianRupee, Users, Zap, Eye, TrendingUp, LogIn,
+  Sofa, MessageSquare, Calendar as CalendarIcon, ChevronLeft, ChevronRight, X, Building2,
+  Shield, Clock, Navigation, IndianRupee, Users, Zap, Eye, TrendingUp, LogIn, Bookmark,
 } from "lucide-react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -51,6 +50,12 @@ const PropertyDetail = () => {
 
   const [property, setProperty] = useState<Property | null>(null);
   const [loading, setLoading] = useState(true);
+  const [similarProperties, setSimilarProperties] = useState<Property[]>([]);
+  const [reviews, setReviews] = useState<PropertyReviewDTO[]>([]);
+  const [reviewRating, setReviewRating] = useState(5);
+  const [reviewComment, setReviewComment] = useState("");
+  const [savingProperty, setSavingProperty] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     const numId = Number(id);
@@ -95,6 +100,20 @@ const PropertyDetail = () => {
   }, [id, demoMode, user]);
 
   useEffect(() => {
+    const pid = Number(id);
+    if (!pid || demoMode) return;
+    getSimilarPublicProperties(pid, 4)
+      .then((res) => {
+        const list = (res?.data ?? []).map((x) => mapPropertyDtoToProperty(x));
+        setSimilarProperties(list);
+      })
+      .catch(() => setSimilarProperties([]));
+    getPropertyReviews(pid)
+      .then((res) => setReviews(res?.data ?? []))
+      .catch(() => setReviews([]));
+  }, [id, demoMode]);
+
+  useEffect(() => {
     if (demoMode || user) return;
     if (id) {
       navigate("/login", { state: { from: `/property/${id}`, message: "Please sign in to see property details" } });
@@ -106,9 +125,45 @@ const PropertyDetail = () => {
   const [galleryIdx, setGalleryIdx] = useState(0);
   const [contactOpen, setContactOpen] = useState(false);
   const [contactMsg, setContactMsg] = useState("");
-  const [visitDate, setVisitDate] = useState<Date>();
+  const [visitDate, setVisitDate] = useState("");
   const [visitTime, setVisitTime] = useState("");
   const [loginRequiredOpen, setLoginRequiredOpen] = useState(false);
+  const [rentApplyOpen, setRentApplyOpen] = useState(false);
+  const [rentApplySubmitting, setRentApplySubmitting] = useState(false);
+  const [leaseMonths, setLeaseMonths] = useState(11);
+  const [moveInDate, setMoveInDate] = useState("");
+  const [proposedRent, setProposedRent] = useState("");
+  const [securityDeposit, setSecurityDeposit] = useState("");
+  const [rentNote, setRentNote] = useState("");
+
+  const handleSaveToggle = () => {
+    if (!property) return;
+    setSavingProperty(true);
+    const op = saved ? removeSavedProperty(property.id) : saveProperty(property.id);
+    op
+      .then(() => {
+        setSaved((s) => !s);
+        toastSuccess(saved ? "Removed from saved" : "Property saved");
+      })
+      .catch((err) => toastError("Action failed", (err as Error).message))
+      .finally(() => setSavingProperty(false));
+  };
+
+  const handleSubmitReview = () => {
+    if (!property || !reviewComment.trim()) {
+      toastError("Add a review comment");
+      return;
+    }
+    createPropertyReview(property.id, { rating: reviewRating, comment: reviewComment.trim() })
+      .then((res) => {
+        const next = res?.data;
+        if (next) setReviews((prev) => [next, ...prev]);
+        setReviewComment("");
+        setReviewRating(5);
+        toastSuccess("Review submitted");
+      })
+      .catch((err) => toastError("Review failed", (err as Error).message));
+  };
 
   useEffect(() => {
     if (!property || !mapRef.current || mapInstanceRef.current) return;
@@ -168,9 +223,18 @@ const PropertyDetail = () => {
       <div className="min-h-screen bg-background flex flex-col">
         <Navbar />
         <div className="flex-1 flex items-center justify-center">
-          <div className="text-center space-y-4">
-            <h1 className="text-2xl font-bold text-foreground">Property not found</h1>
-            <Button onClick={() => navigate("/properties")}>Browse Properties</Button>
+          <div className="w-full max-w-lg rounded-2xl border border-slate-200 dark:border-slate-700 bg-card p-8 text-center shadow-sm">
+            <div className="mx-auto mb-3 h-12 w-12 rounded-full bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center">
+              <Building2 className="h-6 w-6 text-amber-600 dark:text-amber-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-foreground">Property currently unavailable</h1>
+            <p className="mt-2 text-sm text-muted-foreground">
+              This property may be removed, private, or not visible on public listing right now.
+            </p>
+            <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+              <Button variant="outline" onClick={() => navigate(-1)}>Go Back</Button>
+              <Button onClick={() => navigate("/properties")}>Browse Properties</Button>
+            </div>
           </div>
         </div>
         <Footer />
@@ -199,9 +263,18 @@ const PropertyDetail = () => {
   };
 
   const handleScheduleVisit = () => {
+    const selectedVisitDate = visitDate ? new Date(visitDate) : null;
     if (requireLogin()) return;
-    if (!visitDate) {
+    if (!selectedVisitDate || Number.isNaN(selectedVisitDate.getTime())) {
       toastError("Select a date", "Please pick a visit date.");
+      return;
+    }
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const oneMonthMax = new Date(today);
+    oneMonthMax.setMonth(oneMonthMax.getMonth() + 1);
+    if (selectedVisitDate < today || selectedVisitDate > oneMonthMax) {
+      toastError("Invalid date", "Visits can only be scheduled up to 1 month from today.");
       return;
     }
     if (!visitTime) {
@@ -213,11 +286,11 @@ const PropertyDetail = () => {
       propertyTitle: property.title,
       tenantName: user!.username,
       ownerName: property.ownerUserName,
-      visitDate: visitDate.toISOString(),
+      visitDate: selectedVisitDate.toISOString(),
       type: "VISIT",
     });
-    toastSuccess("Visit requested!", `Scheduled for ${format(visitDate, "PPP")} at ${visitTime}`);
-    setVisitDate(undefined);
+    toastSuccess("Visit requested!", `Scheduled for ${format(selectedVisitDate, "PPP")} at ${visitTime}`);
+    setVisitDate("");
     setVisitTime("");
   };
 
@@ -239,6 +312,56 @@ const PropertyDetail = () => {
 
   const handleGetDirections = () => {
     window.open(googleMapsUrl, "_blank");
+  };
+
+  const handleOpenRentApply = () => {
+    if (requireLogin()) return;
+    if (user?.username && property.ownerUserName && user.username.trim().toLowerCase() === property.ownerUserName.trim().toLowerCase()) {
+      toastError("You cannot apply to your own property");
+      return;
+    }
+    setProposedRent(String(property.price || ""));
+    setSecurityDeposit(String((property.price || 0) * 2));
+    setMoveInDate(new Date().toISOString().slice(0, 10));
+    setLeaseMonths(11);
+    setRentNote("");
+    setRentApplyOpen(true);
+  };
+
+  const handleSubmitRentApply = () => {
+    if (!property?.id) return;
+    const rent = Number(proposedRent);
+    const deposit = securityDeposit.trim() ? Number(securityDeposit) : undefined;
+    if (!Number.isFinite(rent) || rent <= 0) {
+      toastError("Invalid rent amount");
+      return;
+    }
+    if (!moveInDate) {
+      toastError("Select move-in date");
+      return;
+    }
+    const selectedMoveInDate = new Date(`${moveInDate}T00:00:00`);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    if (!(selectedMoveInDate > today)) {
+      toastError("Invalid move-in date", "Please choose a future date for move-in.");
+      return;
+    }
+    setRentApplySubmitting(true);
+    createRentalApplication({
+      propertyId: property.id,
+      proposedRent: rent,
+      moveInDate,
+      leaseMonths,
+      securityDeposit: deposit && Number.isFinite(deposit) && deposit >= 0 ? deposit : undefined,
+      message: rentNote.trim() || undefined,
+    })
+      .then(() => {
+        toastSuccess("Rental request sent", "Owner will review your application.");
+        setRentApplyOpen(false);
+      })
+      .catch((err) => toastError("Could not submit request", (err as Error)?.message))
+      .finally(() => setRentApplySubmitting(false));
   };
 
   return (
@@ -346,10 +469,23 @@ const PropertyDetail = () => {
                 <Button variant="outline" size="icon" onClick={() => setLiked(!liked)}>
                   <Heart className={`h-4 w-4 ${liked ? "fill-destructive text-destructive" : ""}`} />
                 </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={handleSaveToggle}
+                  disabled={savingProperty}
+                  title={saved ? "Saved" : "Save property"}
+                >
+                  <Bookmark className={`h-4 w-4 ${saved ? "fill-primary text-primary" : ""}`} />
+                </Button>
                 <Button variant="outline" size="icon" onClick={() => { navigator.clipboard.writeText(window.location.href); toastSuccess("Link copied!"); }}>
                   <Share2 className="h-4 w-4" />
                 </Button>
               </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {property.verifiedListing && <Badge className="bg-emerald-600 text-white">Verified listing</Badge>}
+              {property.verifiedOwner && <Badge variant="secondary">Verified owner</Badge>}
             </div>
 
             {/* Price & rating */}
@@ -407,6 +543,66 @@ const PropertyDetail = () => {
                     </div>
                   ))}
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg">Reviews</CardTitle></CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={5}
+                    value={reviewRating}
+                    onChange={(e) => setReviewRating(Math.max(1, Math.min(5, Number(e.target.value) || 5)))}
+                    className="rounded-md border bg-background px-3 py-2 text-sm"
+                  />
+                  <Textarea
+                    className="sm:col-span-2"
+                    value={reviewComment}
+                    onChange={(e) => setReviewComment(e.target.value)}
+                    placeholder="Share your experience..."
+                  />
+                </div>
+                <Button size="sm" onClick={handleSubmitReview}>Submit review</Button>
+                <div className="space-y-3">
+                  {reviews.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No reviews yet.</p>
+                  ) : (
+                    reviews.map((r) => (
+                      <div key={r.id} className="rounded-md border p-3">
+                        <div className="text-sm font-medium">{r.reviewerUserName} - {r.rating}/5 {r.verifiedStay ? "(Verified stay)" : ""}</div>
+                        <p className="text-sm text-muted-foreground mt-1">{r.comment}</p>
+                        {r.ownerResponse ? <p className="text-xs mt-2">Owner reply: {r.ownerResponse}</p> : null}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle className="text-lg">Similar Properties</CardTitle></CardHeader>
+              <CardContent>
+                {similarProperties.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No similar listings found.</p>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {similarProperties.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => navigate(`/property/${p.id}`)}
+                        className="text-left rounded-md border p-3 hover:bg-secondary/40"
+                      >
+                        <p className="font-medium">{p.title}</p>
+                        <p className="text-xs text-muted-foreground">{p.location}</p>
+                        <p className="text-sm text-primary mt-1">₹{(p.price ?? 0).toLocaleString()}/month</p>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </CardContent>
             </Card>
 
@@ -472,6 +668,58 @@ const PropertyDetail = () => {
             <Card>
               <CardHeader>
                 <CardTitle className="text-lg flex items-center gap-2">
+                  <Building2 className="h-5 w-5 text-primary" /> Apply for Rent
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Submit a rental application with proposed rent, move-in date, and Rent duration.
+                </p>
+                <Button className="w-full" onClick={handleOpenRentApply}>
+                  Apply for Rent
+                </Button>
+                <Dialog open={rentApplyOpen} onOpenChange={setRentApplyOpen}>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Rental Application</DialogTitle>
+                    </DialogHeader>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="mb-1 text-xs text-muted-foreground">Proposed monthly rent</p>
+                        <input className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={proposedRent} onChange={(e) => setProposedRent(e.target.value)} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs text-muted-foreground">Security deposit</p>
+                        <input className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={securityDeposit} onChange={(e) => setSecurityDeposit(e.target.value)} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs text-muted-foreground">Move-in date</p>
+                        <input type="date" className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={moveInDate} onChange={(e) => setMoveInDate(e.target.value)} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs text-muted-foreground">Lease months</p>
+                        <input type="number" min={1} max={60} className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={leaseMonths} onChange={(e) => setLeaseMonths(Number(e.target.value) || 1)} />
+                      </div>
+                      <div>
+                        <p className="mb-1 text-xs text-muted-foreground">Message (optional)</p>
+                        <Textarea rows={3} value={rentNote} onChange={(e) => setRentNote(e.target.value)} />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setRentApplyOpen(false)}>Cancel</Button>
+                      <Button onClick={handleSubmitRentApply} disabled={rentApplySubmitting}>
+                        {rentApplySubmitting ? "Submitting..." : "Submit application"}
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </CardContent>
+            </Card>
+
+            {/* Schedule visit - Enhanced */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
                   <CalendarIcon className="h-5 w-5 text-primary" /> Schedule Visit
                 </CardTitle>
               </CardHeader>
@@ -479,24 +727,20 @@ const PropertyDetail = () => {
                 {/* Date picker */}
                 <div className="space-y-2">
                   <p className="text-xs font-semibold text-foreground">Select Date</p>
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" className={cn("w-full justify-start text-left font-normal", !visitDate && "text-muted-foreground")}>
-                        <CalendarIcon className="mr-2 h-4 w-4" />
-                        {visitDate ? format(visitDate, "PPP") : "Pick a preferred date"}
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-auto p-0" align="start">
-                      <Calendar
-                        mode="single"
-                        selected={visitDate}
-                        onSelect={setVisitDate}
-                        disabled={(date) => date < new Date()}
-                        initialFocus
-                        className={cn("p-3 pointer-events-auto")}
-                      />
-                    </PopoverContent>
-                  </Popover>
+                  <DatePickerCalendar
+                    value={visitDate}
+                    onChange={setVisitDate}
+                    minDate={new Date()}
+                    maxDate={(() => {
+                      const d = new Date();
+                      d.setMonth(d.getMonth() + 1);
+                      return d;
+                    })()}
+                    hideLabel
+                    useMonthYearDropdowns
+                    placeholder="Pick a preferred date"
+                    iconPosition="left"
+                  />
                 </div>
 
                 {/* Time slots */}
@@ -521,9 +765,8 @@ const PropertyDetail = () => {
 
                 <Button className="w-full" onClick={handleScheduleVisit} disabled={!visitDate || !visitTime}>
                   <CalendarIcon className="h-4 w-4 mr-2" />
-                  {visitDate && visitTime ? `Book for ${format(visitDate, "MMM d")} at ${visitTime}` : "Select date & time to book"}
+                  {visitDate && visitTime ? `Book for ${format(new Date(visitDate), "MMM d")} at ${visitTime}` : "Select date & time to book"}
                 </Button>
-                <p className="text-xs text-muted-foreground text-center">Free cancellation up to 24 hours before</p>
               </CardContent>
             </Card>
 

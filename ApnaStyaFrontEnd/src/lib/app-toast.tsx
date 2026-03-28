@@ -7,7 +7,7 @@ import toast from "react-hot-toast";
 
 const SUCCESS_MS = 1000;
 /** Errors dismiss a bit faster so they don’t linger */
-const ERROR_MS = 1000;
+const ERROR_MS = 3500;
 
 function renderContent(message: string, description?: string): string | ReactNode {
   if (!description) return message;
@@ -27,4 +27,18 @@ export function toastSuccess(message: string, description?: string) {
 /** Error notification — ~3.5s (see `HotToaster` error toastOptions) */
 export function toastError(message: string, description?: string) {
   toast.error(renderContent(message, description), { duration: ERROR_MS });
+}
+
+/** Standardized friendly action success copy */
+export function toastActionSuccess(action: string, subject?: string, description?: string) {
+  const normalized = action.trim();
+  const title = subject ? `${subject} ${normalized} successfully` : `${normalized} successfully`;
+  toastSuccess(title, description);
+}
+
+/** Standardized friendly action failure copy */
+export function toastActionError(action: string, subject?: string, reason?: string) {
+  const normalized = action.trim();
+  const title = subject ? `Could not ${normalized.toLowerCase()} ${subject.toLowerCase()}` : `Could not ${normalized.toLowerCase()}`;
+  toastError(title, reason ?? "Please try again.");
 }

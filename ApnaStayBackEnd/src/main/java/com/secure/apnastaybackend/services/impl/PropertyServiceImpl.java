@@ -1,6 +1,7 @@
 package com.secure.apnastaybackend.services.impl;
 
 import com.secure.apnastaybackend.dto.request.PropertyRequest;
+import com.secure.apnastaybackend.dto.response.PagedResponse;
 import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
 import com.secure.apnastaybackend.entity.AppRole;
@@ -26,9 +27,12 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
@@ -376,6 +380,92 @@ public class PropertyServiceImpl implements PropertyService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public PagedResponse<PropertyPublicDTO> searchPublicProperties(
+            String city,
+            String pinCode,
+            Integer minBedrooms,
+            Integer minBathrooms,
+            BigDecimal minPrice,
+            BigDecimal maxPrice,
+            List<String> amenities,
+            com.secure.apnastaybackend.entity.FurnishingType furnishing,
+            Double minLatitude,
+            Double maxLatitude,
+            Double minLongitude,
+            Double maxLongitude,
+            String sortBy,
+            String sortDir,
+            int page,
+            int size
+    ) {
+        List<Property> filtered = propertyRepository.findByStatus(PropertyStatus.AVAILABLE).stream()
+                .filter(p -> city == null || city.isBlank() || (p.getCity() != null && p.getCity().equalsIgnoreCase(city.trim())))
+                .filter(p -> pinCode == null || pinCode.isBlank() || Objects.equals(pinCode.trim(), p.getPinCode()))
+                .filter(p -> minBedrooms == null || (p.getBedrooms() != null && p.getBedrooms() >= minBedrooms))
+                .filter(p -> minBathrooms == null || (p.getBathrooms() != null && p.getBathrooms() >= minBathrooms))
+                .filter(p -> minPrice == null || (p.getPrice() != null && p.getPrice().compareTo(minPrice) >= 0))
+                .filter(p -> maxPrice == null || (p.getPrice() != null && p.getPrice().compareTo(maxPrice) <= 0))
+                .filter(p -> furnishing == null || p.getFurnishing() == furnishing)
+                .filter(p -> minLatitude == null || (p.getLatitude() != null && p.getLatitude() >= minLatitude))
+                .filter(p -> maxLatitude == null || (p.getLatitude() != null && p.getLatitude() <= maxLatitude))
+                .filter(p -> minLongitude == null || (p.getLongitude() != null && p.getLongitude() >= minLongitude))
+                .filter(p -> maxLongitude == null || (p.getLongitude() != null && p.getLongitude() <= maxLongitude))
+                .filter(p -> {
+                    if (amenities == null || amenities.isEmpty()) return true;
+                    List<String> existing = p.getAmenities() != null ? p.getAmenities() : List.of();
+                    for (String a : amenities) {
+                        if (a == null || a.isBlank()) continue;
+                        boolean found = existing.stream().anyMatch(x -> x != null && x.equalsIgnoreCase(a.trim()));
+                        if (!found) return false;
+                    }
+                    return true;
+                })
+                .collect(Collectors.toList());
+
+        Comparator<Property> comparator;
+        String key = sortBy == null ? "newest" : sortBy.trim().toLowerCase(Locale.ROOT);
+        comparator = switch (key) {
+            case "price" -> Comparator.comparing(Property::getPrice, Comparator.nullsLast(BigDecimal::compareTo));
+            case "rating" -> Comparator.comparing(Property::getRating, Comparator.nullsLast(Double::compareTo));
+            default -> Comparator.comparing(Property::getCreatedAt, Comparator.nullsLast(java.time.LocalDateTime::compareTo));
+        };
+        boolean descending = sortDir == null || !sortDir.equalsIgnoreCase("asc");
+        if (descending) comparator = comparator.reversed();
+        filtered.sort(comparator);
+
+        int safeSize = Math.max(1, Math.min(size, 100));
+        int safePage = Math.max(page, 0);
+        int from = safePage * safeSize;
+        int to = Math.min(from + safeSize, filtered.size());
+        List<PropertyPublicDTO> items = from >= filtered.size()
+                ? List.of()
+                : filtered.subList(from, to).stream().map(this::convertToPublicDTO).toList();
+        int totalPages = (int) Math.ceil((double) filtered.size() / safeSize);
+        return new PagedResponse<>(items, safePage, safeSize, filtered.size(), totalPages, safePage + 1 < totalPages);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<PropertyPublicDTO> getSimilarPublicProperties(Long propertyId, int limit) {
+        Property source = propertyRepository.findById(propertyId)
+                .orElseThrow(() -> new ResourceNotFoundException("Property", "id", propertyId));
+        int safeLimit = Math.max(1, Math.min(limit, 20));
+        BigDecimal base = source.getPrice() != null ? source.getPrice() : BigDecimal.ZERO;
+        BigDecimal min = base.multiply(BigDecimal.valueOf(0.80));
+        BigDecimal max = base.multiply(BigDecimal.valueOf(1.20));
+        return propertyRepository.findByStatus(PropertyStatus.AVAILABLE).stream()
+                .filter(p -> !p.getId().equals(propertyId))
+                .filter(p -> p.getPropertyType() == source.getPropertyType())
+                .filter(p -> p.getCity() != null && source.getCity() != null && p.getCity().equalsIgnoreCase(source.getCity()))
+                .filter(p -> p.getPrice() != null && p.getPrice().compareTo(min) >= 0 && p.getPrice().compareTo(max) <= 0)
+                .sorted(Comparator.comparing(Property::getRating, Comparator.nullsLast(Double::compareTo)).reversed())
+                .limit(safeLimit)
+                .map(this::convertToPublicDTO)
+                .toList();
+    }
+
+    @Override
     @Transactional
     public PropertyDTO approveProperty(String userName, Long propertyId) {
         return updatePropertyStatus(userName, propertyId, PropertyStatus.AVAILABLE);
@@ -453,6 +543,8 @@ public class PropertyServiceImpl implements PropertyService {
         dto.setCity(property.getCity());
         dto.setState(property.getState());
         dto.setImages(buildMergedImageUrls(property));
+        dto.setVerifiedListing(property.getStatus() == PropertyStatus.AVAILABLE);
+        dto.setVerifiedOwner(profileService.isProfileApproved(property.getOwnerUserName(), AppRole.ROLE_OWNER));
         return dto;
     }
 

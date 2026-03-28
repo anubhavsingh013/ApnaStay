@@ -15,15 +15,17 @@ import com.secure.apnastaybackend.repositories.ComplaintRepository;
 import com.secure.apnastaybackend.repositories.ComplaintThreadReadRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
-import com.secure.apnastaybackend.services.ComplaintMessageRealtimePublisher;
 import com.secure.apnastaybackend.services.ComplaintService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -36,7 +38,29 @@ public class ComplaintServiceImpl implements ComplaintService {
     private final ComplaintThreadReadRepository complaintThreadReadRepository;
     private final UserRepository userRepository;
     private final PropertyRepository propertyRepository;
-    private final ComplaintMessageRealtimePublisher complaintMessageRealtimePublisher;
+    private final SimpMessagingTemplate messagingTemplate;
+
+    private static String topicForComplaint(long complaintId) {
+        return "/topic/complaint/" + complaintId;
+    }
+
+    private static String topicForUser(long userId) {
+        return "/topic/chat/" + userId;
+    }
+
+    private static List<Long> participantUserIds(Complaint complaint) {
+        java.util.LinkedHashSet<Long> ids = new java.util.LinkedHashSet<>();
+        if (complaint.getRaisedBy() != null && complaint.getRaisedBy().getUserId() != null) {
+            ids.add(complaint.getRaisedBy().getUserId());
+        }
+        if (complaint.getRelatedUser() != null && complaint.getRelatedUser().getUserId() != null) {
+            ids.add(complaint.getRelatedUser().getUserId());
+        }
+        if (complaint.getAssignedTo() != null && complaint.getAssignedTo().getUserId() != null) {
+            ids.add(complaint.getAssignedTo().getUserId());
+        }
+        return new java.util.ArrayList<>(ids);
+    }
 
     @Override
     @Transactional
@@ -61,6 +85,9 @@ public class ComplaintServiceImpl implements ComplaintService {
         complaint.setDescription(request.getDescription());
         complaint.setStatus(ComplaintStatus.OPEN);
         complaint.setPriority(request.getPriority() != null ? request.getPriority() : ComplaintPriority.MEDIUM);
+        complaint.setCategory(request.getCategory() != null ? request.getCategory().trim() : "GENERAL");
+        complaint.setResponseDueAt(LocalDateTime.now().plusHours(4));
+        complaint.setResolutionDueAt(LocalDateTime.now().plusDays(2));
         Complaint saved = complaintRepository.save(complaint);
         log.info("Complaint raised: id={} by {}", saved.getId(), userName);
         return toComplaintDTO(saved);
@@ -140,6 +167,9 @@ public class ComplaintServiceImpl implements ComplaintService {
                 .orElseThrow(() -> new ResourceNotFoundException("User", "id", request.getAssignToUserId()));
         complaint.setAssignedTo(assignTo);
         complaint.setStatus(ComplaintStatus.IN_PROGRESS);
+        if (complaint.getFirstResponseAt() == null) {
+            complaint.setFirstResponseAt(LocalDateTime.now());
+        }
         Complaint saved = complaintRepository.save(complaint);
         log.info("Complaint {} assigned to user {}", id, assignTo.getUserName());
         return toComplaintDTO(saved);
@@ -182,11 +212,16 @@ public class ComplaintServiceImpl implements ComplaintService {
         msg.setMessageText(request.getMessageText());
         // Ensure DTO/socket payload always has a time (CreationTimestamp can be unset on transient entity until flush in some cases).
         msg.setCreatedAt(java.time.LocalDateTime.now());
+        if (complaint.getFirstResponseAt() == null && complaint.getAssignedTo() != null
+                && complaint.getAssignedTo().getUserId().equals(user.getUserId())) {
+            complaint.setFirstResponseAt(LocalDateTime.now());
+        }
         complaint.getMessages().add(msg);
         complaintRepository.saveAndFlush(complaint);
         ComplaintMessageDTO dto = toMessageDTO(msg);
         log.info("Message added to complaint {} by {}", complaintId, userName);
-        complaintMessageRealtimePublisher.publishNewMessage(complaintId, dto);
+        log.info("WS broadcast complaint message: complaintId={}, messageId={}, sender={}", complaintId, dto.getId(), userName);
+        messagingTemplate.convertAndSend(topicForComplaint(complaintId), dto);
         return dto;
     }
 
@@ -242,7 +277,14 @@ public class ComplaintServiceImpl implements ComplaintService {
         msg.setDeleted(true);
         msg.setMessageText("");
         complaintMessageRepository.save(msg);
-        complaintMessageRealtimePublisher.publishMessageDeleted(complaintId, messageId);
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("type", "messageDeleted");
+        envelope.put("complaintId", complaintId);
+        envelope.put("messageId", messageId);
+        messagingTemplate.convertAndSend(topicForComplaint(complaintId), (Object) envelope);
+        for (Long uid : participantUserIds(complaint)) {
+            messagingTemplate.convertAndSend(topicForUser(uid), (Object) envelope);
+        }
         log.info("Complaint message {} soft-deleted on complaint {} by {}", messageId, complaintId, userName);
         return toMessageDTO(msg);
     }
@@ -283,7 +325,15 @@ public class ComplaintServiceImpl implements ComplaintService {
         row.setComplaint(complaint);
         row.setUser(user);
         complaintThreadReadRepository.save(row);
-        complaintMessageRealtimePublisher.publishReadReceipt(complaintId, userName, merged);
+        Map<String, Object> envelope = new LinkedHashMap<>();
+        envelope.put("type", "readReceipt");
+        envelope.put("complaintId", complaintId);
+        envelope.put("readerUserName", userName);
+        envelope.put("lastReadMessageId", merged);
+        messagingTemplate.convertAndSend(topicForComplaint(complaintId), (Object) envelope);
+        for (Long uid : participantUserIds(complaint)) {
+            messagingTemplate.convertAndSend(topicForUser(uid), (Object) envelope);
+        }
     }
 
     @Override
@@ -302,6 +352,41 @@ public class ComplaintServiceImpl implements ComplaintService {
                         .lastReadMessageId(r.getLastReadMessageId())
                         .build())
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public ComplaintDTO submitCsat(String userName, Long complaintId, Integer score) {
+        if (score == null || score < 1 || score > 5) {
+            throw new BadRequestException("CSAT score must be in range 1-5");
+        }
+        Complaint complaint = complaintRepository.findById(complaintId)
+                .orElseThrow(() -> new ResourceNotFoundException("Complaint", "id", complaintId));
+        if (complaint.getStatus() != ComplaintStatus.RESOLVED) {
+            throw new BadRequestException("CSAT can be submitted only for resolved complaints");
+        }
+        if (complaint.getRaisedBy() == null || !complaint.getRaisedBy().getUserName().equals(userName)) {
+            throw new BadRequestException("Only complaint raiser can submit CSAT");
+        }
+        complaint.setCsatScore(score);
+        return toComplaintDTO(complaintRepository.save(complaint));
+    }
+
+    @Override
+    @Transactional
+    public int runSlaEscalationCycle() {
+        int flagged = 0;
+        LocalDateTime now = LocalDateTime.now();
+        for (Complaint c : complaintRepository.findAll()) {
+            boolean responseBreached = c.getFirstResponseAt() == null && c.getResponseDueAt() != null && c.getResponseDueAt().isBefore(now);
+            boolean resolutionBreached = c.getStatus() != ComplaintStatus.RESOLVED && c.getResolutionDueAt() != null && c.getResolutionDueAt().isBefore(now);
+            if (responseBreached || resolutionBreached) {
+                flagged++;
+                log.warn("Complaint SLA breach flagged: id={}, responseBreached={}, resolutionBreached={}",
+                        c.getId(), responseBreached, resolutionBreached);
+            }
+        }
+        return flagged;
     }
 
     private boolean canAccessComplaint(Complaint complaint, User user) {
@@ -334,12 +419,17 @@ public class ComplaintServiceImpl implements ComplaintService {
                 .description(c.getDescription())
                 .status(c.getStatus())
                 .priority(c.getPriority())
+                .category(c.getCategory())
                 .resolutionNote(c.getResolutionNote())
                 .resolvedAt(c.getResolvedAt())
                 .resolvedByUserId(c.getResolvedBy() != null ? c.getResolvedBy().getUserId() : null)
                 .resolvedByUserName(c.getResolvedBy() != null ? c.getResolvedBy().getUserName() : null)
                 .createdAt(c.getCreatedAt())
                 .updatedAt(c.getUpdatedAt())
+                .firstResponseAt(c.getFirstResponseAt())
+                .responseDueAt(c.getResponseDueAt())
+                .resolutionDueAt(c.getResolutionDueAt())
+                .csatScore(c.getCsatScore())
                 .messages(messageDtos)
                 .build();
     }

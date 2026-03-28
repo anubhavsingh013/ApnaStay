@@ -50,6 +50,8 @@ export interface Property {
   status?: string;
   createdAt?: string;
   updatedAt?: string;
+  verifiedListing?: boolean;
+  verifiedOwner?: boolean;
 }
 
 /** Map backend PropertyDTO to frontend Property for listing/cards/detail. Handles partial API response (e.g. from public listing). */
@@ -88,6 +90,8 @@ export function mapPropertyDtoToProperty(dto: PropertyDTO | Record<string, unkno
     status: d.status,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
+    verifiedListing: d.verifiedListing ?? undefined,
+    verifiedOwner: d.verifiedOwner ?? undefined,
   };
 }
 

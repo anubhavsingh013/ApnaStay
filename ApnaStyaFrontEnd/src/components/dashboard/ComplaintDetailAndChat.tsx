@@ -20,6 +20,8 @@ export type ComplaintDetailAndChatProps = {
   c: ComplaintDetailRow;
   propertyTitle: string;
   currentUserName: string;
+  /** When set, bubble side / ticks prefer senderId === this id (avoids username casing / display mismatches). */
+  currentUserId?: number | string | null;
   useRealApi: boolean;
   complaintIdForChat: number | null;
   messages: ComplaintMessageDTO[];
@@ -46,6 +48,7 @@ export function ComplaintDetailAndChat({
   c,
   propertyTitle,
   currentUserName,
+  currentUserId = null,
   useRealApi,
   complaintIdForChat,
   messages,
@@ -177,9 +180,6 @@ export function ComplaintDetailAndChat({
                 <MessageSquare className="h-4 w-4" />
                 Open live chat
               </Button>
-              <p className="text-center text-[11px] text-muted-foreground">
-                Messages sync in real time while this complaint is open — open chat to read the thread and reply.
-              </p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -194,6 +194,7 @@ export function ComplaintDetailAndChat({
                   complaintId={complaintIdForChat}
                   messages={messages}
                   currentUserName={currentUserName}
+                  currentUserId={currentUserId}
                   readReceiptsByUser={readReceiptsByUser}
                   typingUserNames={typingUserNames}
                   messageText={messageText}

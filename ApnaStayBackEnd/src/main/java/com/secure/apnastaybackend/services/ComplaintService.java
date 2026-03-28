@@ -39,5 +39,10 @@ public interface ComplaintService {
 
     /** Used by Socket.IO to authorize joining a complaint room without loading full messages. */
     boolean canUserAccessComplaint(String userName, Long complaintId);
+
+    ComplaintDTO submitCsat(String userName, Long complaintId, Integer score);
+
+    int runSlaEscalationCycle();
+
 }
 

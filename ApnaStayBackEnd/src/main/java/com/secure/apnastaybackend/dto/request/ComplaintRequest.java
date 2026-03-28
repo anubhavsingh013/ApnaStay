@@ -25,5 +25,7 @@ public class ComplaintRequest {
     private Long relatedUserId;
 
     private Long propertyId;
+
+    private String category;
 }
 

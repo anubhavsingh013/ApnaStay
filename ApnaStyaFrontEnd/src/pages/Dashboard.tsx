@@ -12,7 +12,10 @@ import { toastSuccess, toastError } from "@/lib/app-toast";
 import {
   getProfile, get2faStatus, submitProfileForReview, updateProfile, getProperties as getApiProperties, getComplaints, createComplaint, getUserIdByUsername, getDecodedToken,
   getComplaintMessages, getComplaintReadReceipts, markComplaintThreadRead, sendComplaintMessage, deleteComplaintMessage,
+  getSubmittedRentalApplicationsForCurrentUser, cancelRentalApplication, getActiveLeasesForCurrentUser, getLeasePayments,
+  getSavedProperties, getRentalApplicationTimeline, getLeaseDashboard,
   type ProfileDTO, type PropertyDTO, type ComplaintDTO, type ComplaintPriority, type ComplaintStatus, type ComplaintMessageDTO,
+  type RentalApplicationDTO, type LeaseDTO, type LeasePaymentDTO, type SavedPropertyDTO, type RentalApplicationTimelineEventDTO, type LeaseDashboardDTO,
 } from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
@@ -40,9 +43,14 @@ import { isProfileLocationComplete } from "@/components/profile/shared/profileLo
 import { RaiseComplaintMuiFields } from "@/components/dashboard/RaiseComplaintMuiFields";
 import { formatDob, cn } from "@/lib/utils";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
-import { mergeComplaintMessageList, sortComplaintMessages } from "@/lib/complaintSocket";
+import {
+  complaintMessagesForDisplay,
+  mergeComplaintMessageList,
+  sortComplaintMessages,
+} from "@/lib/complaintSocket";
 import { emitComplaintRead } from "@/lib/complaintStompClient";
 import { ComplaintDetailAndChat } from "@/components/dashboard/ComplaintDetailAndChat";
+import { UtilityActionButton } from "@/components/common/UtilityActionButton";
 import { useComplaintMessagesSocket } from "@/hooks/useComplaintMessagesSocket";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 
@@ -300,6 +308,25 @@ const Dashboard = () => {
   const [complaintReadReceiptsByUser, setComplaintReadReceiptsByUser] = useState<Record<string, number>>({});
   const [complaintLiveChatOpen, setComplaintLiveChatOpen] = useState(false);
   const [complaintMessageDeletingId, setComplaintMessageDeletingId] = useState<number | null>(null);
+  const [rentalApplications, setRentalApplications] = useState<RentalApplicationDTO[]>([]);
+  const [rentalLeases, setRentalLeases] = useState<LeaseDTO[]>([]);
+  const [rentalPayments, setRentalPayments] = useState<LeasePaymentDTO[]>([]);
+  const [savedProperties, setSavedProperties] = useState<SavedPropertyDTO[]>([]);
+  const [propertyTypeFilter, setPropertyTypeFilter] = useState<"ALL" | "RENTED" | "SAVED">("ALL");
+  const [propertyInfoDialog, setPropertyInfoDialog] = useState<{
+    open: boolean;
+    title: string;
+    location: string;
+    price: number;
+    status: string;
+    subtitle?: string;
+    propertyId?: number;
+    leaseId?: number;
+    itemType?: "RENTED" | "SAVED";
+  }>({ open: false, title: "", location: "", price: 0, status: "", subtitle: "", propertyId: undefined, leaseId: undefined, itemType: undefined });
+  const [timelineDialog, setTimelineDialog] = useState<{ open: boolean; applicationId: number | null; events: RentalApplicationTimelineEventDTO[] }>({ open: false, applicationId: null, events: [] });
+  const [leaseDashboards, setLeaseDashboards] = useState<Record<number, LeaseDashboardDTO>>({});
+  const [rentalsLoading, setRentalsLoading] = useState(false);
 
   const tenantForData = demoMode ? currentTenant : (user?.username ?? currentTenant);
   const tenantProfileApproved = demoMode ? isTenantProfileApproved(tenantForData) : (apiApproved === true || apiProfile?.status === "APPROVED");
@@ -316,8 +343,24 @@ const Dashboard = () => {
     ? (profileUpdatedNeedsResubmit ? null : (tenantProfiles.find((p) => p.tenantUser === tenantForData)?.status ?? null))
     : ((apiProfile?.status as VerificationStatus) ?? apiProfileStatus ?? null);
   const myBookings = bookings.filter(b => b.tenantName === tenantForData);
+  const totalBookingCount = useRealApi ? rentalApplications.length : myBookings.length;
+  const activeBookingCount = useRealApi
+    ? rentalApplications.filter((a) => a.status === "PENDING" || a.status === "APPROVED").length
+    : myBookings.filter((b) => b.status === "REQUESTED" || b.status === "APPROVED").length;
   const myPayments = payments.filter(p => p.tenantName === tenantForData);
-  const displayPayments = demoMode ? [] : myPayments;
+  const displayPayments = useRealApi
+    ? rentalPayments.map((p) => {
+        const lease = rentalLeases.find((l) => l.id === p.leaseId);
+        return {
+          id: p.id,
+          propertyTitle: lease?.propertyTitle ?? `Lease #${p.leaseId}`,
+          month: p.periodMonth,
+          amount: Number(p.amountDue ?? 0),
+          status: p.status,
+          paidAt: p.paidAt ?? undefined,
+        };
+      })
+    : (demoMode ? [] : myPayments);
   const myComplaintsDemo = complaints.filter(c => c.raisedBy === tenantForData || c.againstUser === tenantForData);
   const myComplaintsAll = useRealApi ? apiComplaints : myComplaintsDemo;
   const myComplaints = complaintStatusFilter ? myComplaintsAll.filter((c) => c.status === complaintStatusFilter) : myComplaintsAll;
@@ -354,7 +397,8 @@ const Dashboard = () => {
     getComplaintMessages(id)
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
-        if (Array.isArray(list)) setComplaintMessages(sortComplaintMessages(list));
+        if (Array.isArray(list))
+          setComplaintMessages(sortComplaintMessages(complaintMessagesForDisplay(list)));
       })
       .catch(() => setComplaintMessages([]));
     getComplaintReadReceipts(id)
@@ -384,7 +428,7 @@ const Dashboard = () => {
 
   useComplaintMessagesSocket({
     complaintId: complaintSocketComplaintId,
-    enabled: Boolean(useRealApi && user),
+    enabled: Boolean(useRealApi && user && complaintLiveChatOpen && complaintSocketComplaintId != null),
     onMessage: (msg) => {
       setComplaintMessages((prev) => mergeComplaintMessageList(prev, msg));
     },
@@ -400,15 +444,22 @@ const Dashboard = () => {
       });
     },
     onMessageDeleted: (messageId) => {
-      setComplaintMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, deleted: true, messageText: "" } : m)),
-      );
+      setComplaintMessages((prev) => prev.filter((m) => m.id !== messageId));
     },
   });
 
   useEffect(() => {
     if (!useRealApi || complaintSocketComplaintId == null || !complaintLiveChatOpen) return;
-    const ids = complaintMessages.map((m) => m.id).filter((x): x is number => x != null && x > 0);
+    const myId = decodedToken?.userId ?? null;
+    const myName = (user?.username ?? tenantForData).trim().toLowerCase();
+    const ids = complaintMessages
+      .filter((m) => {
+        const mid = m.id;
+        if (mid == null || mid <= 0) return false;
+        if (myId != null && myId > 0) return m.senderId !== myId;
+        return (m.senderUserName ?? "").trim().toLowerCase() !== myName;
+      })
+      .map((m) => m.id as number);
     if (ids.length === 0) return;
     const maxId = Math.max(...ids);
     const t = window.setTimeout(() => {
@@ -446,10 +497,20 @@ const Dashboard = () => {
   const handleSendTenantComplaintMessage = () => {
     if (!detailItem || detailItem.type !== "complaint" || !complaintMessageText.trim() || !useRealApi) return;
     const id = (detailItem.data as ComplaintDTO).id;
+    const trimmed = complaintMessageText.trim();
+    const optimistic: ComplaintMessageDTO = {
+      id: null,
+      complaintId: id,
+      senderId: decodedToken?.userId ?? 0,
+      senderUserName: user?.username ?? tenantForData,
+      messageText: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setComplaintMessages((prev) => mergeComplaintMessageList(prev, optimistic));
+    setComplaintMessageText("");
     setComplaintMessageSending(true);
-    sendComplaintMessage(id, complaintMessageText.trim())
+    sendComplaintMessage(id, trimmed)
       .then((res) => {
-        setComplaintMessageText("");
         const d = (res as { data?: ComplaintMessageDTO }).data;
         if (d) setComplaintMessages((prev) => mergeComplaintMessageList(prev, d));
       })
@@ -493,8 +554,143 @@ const Dashboard = () => {
       })
       .finally(() => setAgainstOptionsLoading(false));
   }, [useRealApi, complaintForm.propertyId, apiPropertiesForComplaint]);
+
+  useEffect(() => {
+    if (!useRealApi || !user) return;
+    if (activeTab !== "bookings" && activeTab !== "payments" && activeTab !== "overview" && activeTab !== "my-properties") return;
+    setRentalsLoading(true);
+    Promise.all([getSubmittedRentalApplicationsForCurrentUser(), getActiveLeasesForCurrentUser()])
+      .then(async ([appsRes, leasesRes]) => {
+        const apps = (appsRes as { data?: RentalApplicationDTO[] }).data;
+        const leases = (leasesRes as { data?: LeaseDTO[] }).data;
+        const safeApps = Array.isArray(apps) ? apps : [];
+        const safeLeases = Array.isArray(leases) ? leases : [];
+        setRentalApplications(safeApps);
+        setRentalLeases(safeLeases);
+        if (activeTab === "payments" || activeTab === "overview") {
+          const paymentsNested = await Promise.all(
+            safeLeases.map((l) =>
+              getLeasePayments(l.id)
+                .then((r) => ((r as { data?: LeasePaymentDTO[] }).data ?? []))
+                .catch(() => [] as LeasePaymentDTO[])
+            )
+          );
+          setRentalPayments(paymentsNested.flat());
+        }
+      })
+      .catch(() => {
+        setRentalApplications([]);
+        setRentalLeases([]);
+        if (activeTab === "payments" || activeTab === "overview") {
+          setRentalPayments([]);
+        }
+      })
+      .finally(() => setRentalsLoading(false));
+  }, [useRealApi, user, activeTab]);
+
+  useEffect(() => {
+    if (!useRealApi || !user) return;
+    if (activeTab !== "overview" && activeTab !== "my-properties") return;
+    getSavedProperties()
+      .then((res) => setSavedProperties(((res as { data?: SavedPropertyDTO[] }).data) ?? []))
+      .catch(() => setSavedProperties([]));
+  }, [useRealApi, user, activeTab]);
+
+  useEffect(() => {
+    if (!useRealApi || !user) return;
+    if (activeTab !== "payments" && activeTab !== "overview") return;
+    Promise.all(
+      rentalLeases.map((l) =>
+        getLeaseDashboard(l.id)
+          .then((res) => ({ id: l.id, data: (res as { data?: LeaseDashboardDTO }).data }))
+          .catch(() => ({ id: l.id, data: undefined }))
+      )
+    ).then((rows) => {
+      const map: Record<number, LeaseDashboardDTO> = {};
+      for (const r of rows) {
+        if (r.data) map[r.id] = r.data;
+      }
+      setLeaseDashboards(map);
+    });
+  }, [useRealApi, user, activeTab, rentalLeases]);
+
+  const handleOpenApplicationTimeline = (applicationId: number) => {
+    getRentalApplicationTimeline(applicationId)
+      .then((res) => {
+        const events = ((res as { data?: RentalApplicationTimelineEventDTO[] }).data) ?? [];
+        setTimelineDialog({ open: true, applicationId, events });
+      })
+      .catch((err) => toastError("Could not load timeline", (err as Error)?.message));
+  };
   const unreadCount = myNotifications.filter(n => !n.read).length;
-  const myRentedProperties = staticProperties.filter(p => p.tenantUserName === tenantForData);
+  const myRentedProperties = useRealApi
+    ? rentalLeases
+    : staticProperties.filter(p => p.tenantUserName === tenantForData);
+  const mySavedProperties = useRealApi ? savedProperties : [];
+  const myLikedProperties = useRealApi ? savedProperties : [];
+  const pendingPayments = displayPayments.filter((p) => p.status !== "PAID");
+  const paidPayments = displayPayments.filter((p) => p.status === "PAID");
+  const totalPendingAmount = pendingPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const totalPaidAmount = paidPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+
+  const myPropertyCards = useMemo(() => {
+    const rented = (useRealApi ? rentalLeases : []).map((lease) => ({
+      key: `rent-${lease.id}`,
+      type: "RENTED" as const,
+      title: lease.propertyTitle,
+      city: "Rented property",
+      state: "",
+      price: Number(lease.monthlyRent ?? 0),
+      status: lease.status,
+      statusLabel: lease.status === "ACTIVE" ? "RENTED" : lease.status,
+      subtitle: `Lease #${lease.id} • Due day ${lease.dueDayOfMonth}`,
+      propertyId: lease.propertyId,
+      leaseId: lease.id,
+      lease,
+    }));
+    const saved = mySavedProperties.map((sp) => ({
+      key: `save-${sp.id}`,
+      type: "SAVED" as const,
+      title: sp.propertyTitle,
+      city: sp.city,
+      state: sp.state,
+      price: Number(sp.price ?? 0),
+      status: "SAVED",
+      statusLabel: "SAVED",
+      subtitle: "Saved for quick access",
+      propertyId: sp.propertyId,
+      leaseId: undefined,
+      lease: undefined,
+    }));
+    const merged = [...rented, ...saved];
+    if (propertyTypeFilter === "ALL") return merged;
+    return merged.filter((x) => x.type === propertyTypeFilter);
+  }, [useRealApi, rentalLeases, mySavedProperties, propertyTypeFilter]);
+
+  const openRentedLeaseDetails = (item: {
+    title: string;
+    city: string;
+    state: string;
+    price: number;
+    status: string;
+    subtitle: string;
+    propertyId?: number;
+    leaseId?: number;
+    lease?: LeaseDTO;
+  }) => {
+    if (!item.leaseId) return;
+    const relatedApplication = rentalApplications.find(
+      (a) => a.propertyId === item.propertyId && (a.status === "APPROVED" || a.status === "PENDING"),
+    );
+    const relatedSaved = mySavedProperties.find((s) => s.propertyId === item.propertyId);
+    navigate(`/dashboard/rented/${item.leaseId}`, {
+      state: {
+        lease: item.lease,
+        application: relatedApplication,
+        saved: relatedSaved,
+      },
+    });
+  };
 
   const handleRaiseComplaint = async () => {
     if (useRealApi) {
@@ -869,6 +1065,7 @@ const Dashboard = () => {
           {tabs.map((t) => (
             <button
               key={t.id}
+              type="button"
               onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}
             >
@@ -897,7 +1094,7 @@ const Dashboard = () => {
               </div>
               <div className="space-y-0.5">
                 {tabs.map((t) => (
-                  <button key={t.id} onClick={() => setActiveTab(t.id)}
+                  <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-sky-300 dark:border-sky-600/60 bg-sky-50/80 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
                     <t.icon className="h-4 w-4 shrink-0" />
                     {t.label}
@@ -924,11 +1121,11 @@ const Dashboard = () => {
                 <div data-demo-allow className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
                     { icon: Heart, label: "My Properties", value: myRentedProperties.length, sub: null, iconBg: "bg-emerald-100 dark:bg-emerald-900/30", iconColor: "text-emerald-600 dark:text-emerald-400", tab: "my-properties" },
-                    { icon: CalendarDays, label: "Bookings", value: myBookings.length, sub: myBookings.filter(b => b.status === "REQUESTED" || b.status === "APPROVED").length > 0 ? `${myBookings.filter(b => b.status === "REQUESTED" || b.status === "APPROVED").length} active` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "bookings" },
+                    { icon: CalendarDays, label: "Bookings", value: totalBookingCount, sub: activeBookingCount > 0 ? `${activeBookingCount} active` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "bookings" },
                     { icon: CreditCard, label: "Payments", value: displayPayments.length, sub: displayPayments.filter(p => p.status !== "PAID").length > 0 ? `${displayPayments.filter(p => p.status !== "PAID").length} pending` : null, iconBg: "bg-sky-100 dark:bg-sky-900/30", iconColor: "text-sky-600 dark:text-sky-400", tab: "payments" },
                     { icon: FileText, label: "Complaints", value: useRealApi && apiComplaintsLoading ? "…" : myComplaintsAll.length, sub: openComplaintsCount > 0 ? `${openComplaintsCount} open` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "complaints" },
                   ].map(s => (
-                    <button key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
+                    <button type="button" key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
                       <div className="flex items-center justify-between mb-2">
                         <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${s.iconBg}`}><s.icon className={`h-4 w-4 ${s.iconColor}`} /></div>
                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -939,38 +1136,200 @@ const Dashboard = () => {
                     </button>
                   ))}
                 </div>
+                
               </>
             )}
 
             {activeTab === "my-properties" && (
-              <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
-                <h2 className="text-base font-bold text-foreground mb-3">My Rented Properties</h2>
-                {myRentedProperties.length === 0 ? (
+              <div className="space-y-4">
+                <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 p-4">
+                  <div className="flex flex-col gap-3">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <div className="h-9 w-9 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 flex items-center justify-center">
+                          <Heart className="h-5 w-5 text-emerald-600 dark:text-emerald-400" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-bold text-foreground">My Properties</h2>
+                          <p className="text-xs text-muted-foreground">Click a property to view details.</p>
+                        </div>
+                      </div>
+                      <Link to="/properties" className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-0">
+                        <CheckCircle className="h-3.5 w-3.5" /> Browse properties
+                      </Link>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Select value={propertyTypeFilter} onValueChange={(v) => setPropertyTypeFilter(v as "ALL" | "RENTED" | "SAVED")}>
+                        <SelectTrigger className="w-[130px] max-w-[130px] h-9 text-sm bg-background">
+                          <SelectValue placeholder="Filter type" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="ALL">All ({(useRealApi ? rentalLeases.length : myRentedProperties.length) + mySavedProperties.length})</SelectItem>
+                          <SelectItem value="RENTED">Rented ({useRealApi ? rentalLeases.length : myRentedProperties.length})</SelectItem>
+                          <SelectItem value="SAVED">Saved ({mySavedProperties.length})</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+                {myPropertyCards.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <Heart className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-foreground">No rented properties yet</p>
-                    <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">Properties you rent will appear here. Browse and request a rental to get started.</p>
-                    <Link to="/properties" className="mt-4 inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-0">
-                      <CheckCircle className="h-3.5 w-3.5" /> Browse properties
-                    </Link>
+                    <p className="text-sm font-medium text-foreground">No properties match the selected filter</p>
+                    <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">Try changing the filter or save/apply for properties.</p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {myRentedProperties.map(p => <PropertyCard key={p.id} property={p} />)}
+                  <div className="space-y-2">
+                    {myPropertyCards.map((item) => (
+                      <div
+                        key={item.key}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => {
+                          if (item.type === "RENTED") {
+                            openRentedLeaseDetails(item);
+                            return;
+                          }
+                          setPropertyInfoDialog({
+                            open: true,
+                            title: item.title,
+                            location: item.state ? `${item.city}, ${item.state}` : item.city,
+                            price: item.price,
+                            status: item.status,
+                            subtitle: item.subtitle,
+                            propertyId: item.propertyId,
+                            leaseId: item.leaseId,
+                            itemType: item.type,
+                          });
+                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (item.type === "RENTED") { openRentedLeaseDetails(item); return; } setPropertyInfoDialog({ open: true, title: item.title, location: item.state ? `${item.city}, ${item.state}` : item.city, price: item.price, status: item.status, subtitle: item.subtitle, propertyId: item.propertyId, leaseId: item.leaseId, itemType: item.type }); } }}
+                        className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-4 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 transition-all active:scale-[0.995]"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-semibold text-card-foreground truncate">{item.title}</p>
+                            <p className="text-xs text-muted-foreground truncate mt-0.5">{item.state ? `${item.city}, ${item.state}` : item.city} • ₹{Number(item.price ?? 0).toLocaleString()}/mo</p>
+                          </div>
+                          {item.status === "SAVED" ? (
+                            <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">Saved</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                              <CheckCircle className="h-3.5 w-3.5" /> {item.statusLabel}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex flex-wrap items-center justify-end gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); if (item.type === "RENTED") { openRentedLeaseDetails(item); return; } setPropertyInfoDialog({ open: true, title: item.title, location: item.state ? `${item.city}, ${item.state}` : item.city, price: item.price, status: item.status, subtitle: item.subtitle, propertyId: item.propertyId, leaseId: item.leaseId, itemType: item.type }); }}
+                            className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                          >
+                            <Eye className="h-3.5 w-3.5" /> {item.type === "RENTED" ? "Open rented details" : "Details"}
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
+                <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <p className="text-sm font-semibold text-foreground">Submitted Rent Applications</p>
+                    <Badge variant="secondary">{rentalApplications.length}</Badge>
+                  </div>
+                  {rentalApplications.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">No submitted applications yet.</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {rentalApplications.slice(0, 6).map((a) => (
+                        <div key={a.id} className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-card-foreground truncate">{a.propertyTitle}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">Owner: {a.ownerUserName} • Move-in: {new Date(a.moveInDate).toLocaleDateString()}</p>
+                              <p className="text-xs text-muted-foreground">Proposed rent: ₹{Number(a.proposedRent ?? 0).toLocaleString()} for {a.leaseMonths} months</p>
+                            </div>
+                            {a.status === "APPROVED" ? (
+                              <span className="inline-flex items-center gap-1 rounded-md border-2 border-emerald-500/60 bg-emerald-50/80 dark:bg-emerald-950/30 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:text-emerald-300">
+                                <CheckCircle className="h-3.5 w-3.5" /> RENTED
+                              </span>
+                            ) : (
+                              <Badge variant={a.status === "PENDING" ? "secondary" : "destructive"} className="shrink-0">
+                                {a.status}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                
               </div>
             )}
 
             {activeTab === "bookings" && (
               <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h2 className="text-base font-bold text-foreground">Property Visit Requests</h2>
+                  <h2 className="text-base font-bold text-foreground">{useRealApi ? "My Bookings" : "Property Visit Requests"}</h2>
                   <Link to="/properties" className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-3 py-1.5 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:ring-offset-0">
-                    <Plus className="h-3.5 w-3.5" /> Book Visit
+                    <Plus className="h-3.5 w-3.5" /> {useRealApi ? "Rent Property" : "Book Visit"}
                   </Link>
                 </div>
-                {myBookings.length === 0 ? (
+                {useRealApi ? (
+                  rentalsLoading ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">Loading rental applications...</div>
+                  ) : rentalApplications.length === 0 ? (
+                    <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+                      <CalendarDays className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
+                      <p className="text-sm font-medium text-foreground">No rental applications yet</p>
+                      <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">Open any property and make it yours.</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {rentalApplications.map((a) => (
+                        <div key={a.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="text-sm font-semibold text-card-foreground truncate">{a.propertyTitle}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5">Owner: {a.ownerUserName} | Move-in: {new Date(a.moveInDate).toLocaleDateString()}</p>
+                              <p className="text-xs text-muted-foreground">Rent: ₹{Number(a.proposedRent ?? 0).toLocaleString()} for {a.leaseMonths} months</p>
+                            </div>
+                            <Badge variant={a.status === "APPROVED" ? "default" : a.status === "PENDING" ? "secondary" : "destructive"} className="shrink-0">{a.status}</Badge>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => handleOpenApplicationTimeline(a.id)}
+                            >
+                              View timeline
+                            </Button>
+                          {a.status === "PENDING" && (
+                            
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs"
+                                onClick={() => {
+                                  cancelRentalApplication(a.id)
+                                    .then(() => getSubmittedRentalApplicationsForCurrentUser())
+                                    .then((r) => setRentalApplications(((r as { data?: RentalApplicationDTO[] }).data) ?? []))
+                                    .catch((err) => toastError("Failed to cancel", (err as Error)?.message));
+                                }}
+                              >
+                                Cancel request
+                              </Button>
+                            
+                          )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : myBookings.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <CalendarDays className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
                     <p className="text-sm font-medium text-foreground">No visit requests yet</p>
@@ -1014,6 +1373,38 @@ const Dashboard = () => {
                     </div>
                   </div>
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-card p-3">
+                    <p className="text-[11px] text-muted-foreground">Total records</p>
+                    <p className="text-lg font-bold text-foreground">{displayPayments.length}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-card p-3">
+                    <p className="text-[11px] text-muted-foreground">Pending amount</p>
+                    <p className="text-lg font-bold text-amber-600 dark:text-amber-400">₹{totalPendingAmount.toLocaleString()}</p>
+                  </div>
+                  <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-card p-3">
+                    <p className="text-[11px] text-muted-foreground">Paid amount</p>
+                    <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">₹{totalPaidAmount.toLocaleString()}</p>
+                  </div>
+                </div>
+                {useRealApi && rentalLeases.length > 0 && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {rentalLeases.slice(0, 4).map((lease) => {
+                      const dash = leaseDashboards[lease.id];
+                      return (
+                        <div key={lease.id} className="rounded-xl border border-slate-200 dark:border-slate-700 bg-card p-3">
+                          <p className="text-sm font-semibold text-foreground truncate">{lease.propertyTitle}</p>
+                          <p className="text-[11px] text-muted-foreground">Lease #{lease.id}</p>
+                          <div className="mt-2 text-xs text-muted-foreground space-y-0.5">
+                            <p>Next due: {dash?.nextDueDate ? new Date(dash.nextDueDate).toLocaleDateString() : "—"}</p>
+                            <p>Next due amount: ₹{Number(dash?.nextDueAmount ?? 0).toLocaleString()}</p>
+                            <p>Overdue: ₹{Number(dash?.overdueAmount ?? 0).toLocaleString()}</p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
                 {displayPayments.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <CreditCard className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
@@ -1021,29 +1412,63 @@ const Dashboard = () => {
                     <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">Your rent and other payment history will appear here once you have active bookings.</p>
                   </div>
                 ) : (
-                  <div className="space-y-2">
-                    {displayPayments.map(p => (
-                      <div key={p.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <p className="text-sm font-semibold text-card-foreground truncate">{p.propertyTitle}</p>
-                            <p className="text-xs text-muted-foreground">{p.month}</p>
-                          </div>
-                          <div className="text-right shrink-0">
-                            <p className="text-sm font-bold text-foreground">₹{p.amount.toLocaleString()}</p>
-                            <Badge variant={p.status === "PAID" ? "default" : p.status === "OVERDUE" ? "destructive" : "secondary"} className="text-[10px] mt-0.5">{p.status}</Badge>
-                          </div>
-                        </div>
-                        {p.status !== "PAID" && (
-                          <Button size="sm" className="w-full mt-2" onClick={() => handleMakePayment(p.id)}>
-                            <IndianRupee className="h-3 w-3 mr-1" /> Pay Now
-                          </Button>
-                        )}
-                        {p.status === "PAID" && p.paidAt && (
-                          <p className="text-[10px] text-muted-foreground mt-1.5">Paid on {new Date(p.paidAt).toLocaleDateString()}</p>
-                        )}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/60 p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-foreground">Pending Payments</h3>
+                        <Badge variant="secondary">{pendingPayments.length}</Badge>
                       </div>
-                    ))}
+                      {pendingPayments.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No pending payments.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {pendingPayments.map((p) => (
+                            <div key={`pending-${p.id}`} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-card-foreground truncate">{p.propertyTitle}</p>
+                                  <p className="text-xs text-muted-foreground">{p.month}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-foreground">₹{p.amount.toLocaleString()}</p>
+                                  <Badge variant={p.status === "OVERDUE" ? "destructive" : "secondary"} className="text-[10px] mt-0.5">{p.status}</Badge>
+                                </div>
+                              </div>
+                              <Button size="sm" className="w-full mt-2" onClick={() => handleMakePayment(p.id)}>
+                                <IndianRupee className="h-3 w-3 mr-1" /> Pay Now
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <div className="rounded-xl border border-slate-200 dark:border-slate-700 bg-white/80 dark:bg-slate-900/60 p-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-semibold text-foreground">Paid Payments</h3>
+                        <Badge variant="secondary">{paidPayments.length}</Badge>
+                      </div>
+                      {paidPayments.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">No paid payments yet.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {paidPayments.map((p) => (
+                            <div key={`paid-${p.id}`} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                  <p className="text-sm font-semibold text-card-foreground truncate">{p.propertyTitle}</p>
+                                  <p className="text-xs text-muted-foreground">{p.month}</p>
+                                </div>
+                                <div className="text-right shrink-0">
+                                  <p className="text-sm font-bold text-foreground">₹{p.amount.toLocaleString()}</p>
+                                  <Badge variant="default" className="text-[10px] mt-0.5">PAID</Badge>
+                                </div>
+                              </div>
+                              {p.paidAt && <p className="text-[10px] text-muted-foreground mt-1.5">Paid on {new Date(p.paidAt).toLocaleDateString()}</p>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1131,6 +1556,7 @@ const Dashboard = () => {
                           c={c}
                           propertyTitle={propertyTitle}
                           currentUserName={user?.username ?? tenantForData}
+                          currentUserId={decodedToken?.userId ?? null}
                           useRealApi={Boolean(useRealApi)}
                           complaintIdForChat={complaintSocketComplaintId}
                           messages={complaintMessages}
@@ -1626,6 +2052,122 @@ const Dashboard = () => {
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setConfirmAction((p) => ({ ...p, open: false }))}>Cancel</Button>
             <Button variant={confirmAction.variant === "destructive" ? "destructive" : "default"} onClick={runConfirm}>{confirmAction.confirmLabel}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={timelineDialog.open}
+        onOpenChange={(open) => !open && setTimelineDialog({ open: false, applicationId: null, events: [] })}
+      >
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Application Timeline</DialogTitle>
+            <DialogDescription>
+              Track where your rental request currently stands.
+            </DialogDescription>
+          </DialogHeader>
+          {timelineDialog.events.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No timeline events available.</p>
+          ) : (
+            <div className="space-y-2 max-h-72 overflow-y-auto">
+              {timelineDialog.events.map((ev, idx) => (
+                <div key={`${ev.stage}-${idx}`} className="rounded-lg border border-slate-200 dark:border-slate-700 p-3">
+                  <p className="text-sm font-medium text-foreground">{ev.stage.replaceAll("_", " ")}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {ev.occurredAt ? new Date(ev.occurredAt).toLocaleString() : "—"}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setTimelineDialog({ open: false, applicationId: null, events: [] })}>
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={propertyInfoDialog.open}
+        onOpenChange={(open) => !open && setPropertyInfoDialog({ open: false, title: "", location: "", price: 0, status: "", subtitle: "", propertyId: undefined, leaseId: undefined, itemType: undefined })}
+      >
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Property Details</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div>
+              <p className="text-xs text-muted-foreground">Title</p>
+              <p className="font-medium text-foreground">{propertyInfoDialog.title || "—"}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Location</p>
+              <p className="font-medium text-foreground">{propertyInfoDialog.location || "—"}</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Price</p>
+                <p className="font-medium text-foreground">₹{Number(propertyInfoDialog.price ?? 0).toLocaleString()}/month</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Status</p>
+                <p className="font-medium text-foreground">{propertyInfoDialog.status || "—"}</p>
+              </div>
+            </div>
+            {propertyInfoDialog.subtitle ? (
+              <div>
+                <p className="text-xs text-muted-foreground">Info</p>
+                <p className="font-medium text-foreground">{propertyInfoDialog.subtitle}</p>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            {propertyInfoDialog.itemType === "SAVED" && propertyInfoDialog.propertyId ? (
+              <div className="w-full space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  You cannot view all details from saved properties directly. Please visit the Properties page to view complete listing details.
+                </p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link to="/properties">
+                    <UtilityActionButton label="Visit Properties" icon={Search} tone="sky" size="md" />
+                  </Link>
+                  <UtilityActionButton
+                    label="Close"
+                    icon={X}
+                    tone="rose"
+                    size="md"
+                    onClick={() => setPropertyInfoDialog({ open: false, title: "", location: "", price: 0, status: "", subtitle: "", propertyId: undefined, leaseId: undefined, itemType: undefined })}
+                  />
+                </div>
+              </div>
+            ) : null}
+            {propertyInfoDialog.itemType === "RENTED" && propertyInfoDialog.leaseId ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  const leaseId = propertyInfoDialog.leaseId!;
+                  getLeaseDashboard(leaseId)
+                    .then(() => {
+                      setActiveTab("my-properties");
+                      toastSuccess("Lease details refreshed", "You are still in My Properties.");
+                    })
+                    .catch((err) => toastError("Could not open lease details", (err as Error)?.message))
+                    .finally(() => {
+                      setPropertyInfoDialog({ open: false, title: "", location: "", price: 0, status: "", subtitle: "", propertyId: undefined, leaseId: undefined, itemType: undefined });
+                    });
+                }}
+              >
+                Refresh lease details
+              </Button>
+            ) : null}
+            {propertyInfoDialog.itemType !== "SAVED" ? (
+              <Button type="button" onClick={() => setPropertyInfoDialog({ open: false, title: "", location: "", price: 0, status: "", subtitle: "", propertyId: undefined, leaseId: undefined, itemType: undefined })}>
+                Close
+              </Button>
+            ) : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

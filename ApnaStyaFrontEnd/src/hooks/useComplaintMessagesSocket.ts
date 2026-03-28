@@ -3,11 +3,11 @@ import type { ComplaintMessageDTO } from "@/lib/api";
 import {
   disconnectComplaintStomp,
   subscribeComplaintRealtime,
+  getOrCreateComplaintStompClient,
 } from "@/lib/complaintStompClient";
 
 type Options = {
   complaintId: number | null;
-  /** When false, shared STOMP client is disconnected (e.g. logged out). */
   enabled: boolean;
   onMessage: (msg: ComplaintMessageDTO) => void;
   onTyping?: (userName: string, typing: boolean) => void;
@@ -15,11 +15,6 @@ type Options = {
   onMessageDeleted?: (messageId: number) => void;
 };
 
-/**
- * STOMP/SockJS subscription for complaint threads (`/topic/complaint/{id}`).
- * Subscribes whenever a complaint is open so both parties receive broadcasts without needing
- * "Open live chat" first (that control only expands the composer UI).
- */
 export function useComplaintMessagesSocket({
   complaintId,
   enabled,
@@ -28,6 +23,7 @@ export function useComplaintMessagesSocket({
   onReadReceipt,
   onMessageDeleted,
 }: Options) {
+  const jwt = typeof localStorage !== "undefined" ? localStorage.getItem("jwt")?.trim() ?? "" : "";
   const onMessageRef = useRef(onMessage);
   onMessageRef.current = onMessage;
   const onTypingRef = useRef(onTyping);
@@ -38,35 +34,30 @@ export function useComplaintMessagesSocket({
   onMessageDeletedRef.current = onMessageDeleted;
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || complaintId == null) {
       disconnectComplaintStomp();
       return;
     }
+    if (!jwt) return;
+    getOrCreateComplaintStompClient(jwt);
+  }, [enabled, jwt, complaintId]);
 
-    const jwt = typeof localStorage !== "undefined" ? localStorage.getItem("jwt") : null;
-    if (!jwt?.trim()) return;
-
-    if (complaintId == null) {
+  useEffect(() => {
+    if (!enabled || complaintId == null) {
       return;
     }
+    if (!jwt) return;
 
-    const unsub = subscribeComplaintRealtime(complaintId, jwt.trim(), {
+    const unsub = subscribeComplaintRealtime(complaintId, jwt, {
       onMessage: (msg) => onMessageRef.current(msg),
-      onTyping: onTypingRef.current
-        ? (userName, typing) => onTypingRef.current?.(userName, typing)
-        : undefined,
-      onReadReceipt: onReadReceiptRef.current
-        ? (readerUserName, lastReadMessageId) =>
-            onReadReceiptRef.current?.(readerUserName, lastReadMessageId)
-        : undefined,
-      onMessageDeleted: onMessageDeletedRef.current
-        ? (id) => onMessageDeletedRef.current?.(id)
-        : undefined,
+      onTyping: (userName, typing) => onTypingRef.current?.(userName, typing),
+      onReadReceipt: (readerUserName, lastReadMessageId) =>
+        onReadReceiptRef.current?.(readerUserName, lastReadMessageId),
+      onMessageDeleted: (id) => onMessageDeletedRef.current?.(id),
     });
 
     return () => {
       unsub();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refs hold latest callbacks
-  }, [complaintId, enabled]);
+  }, [complaintId, enabled, jwt]);
 }

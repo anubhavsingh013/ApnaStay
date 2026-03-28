@@ -79,15 +79,12 @@ public class AuthController {
                             loginRequest.getUsername(),
                             loginRequest.getPassword()));
         } catch (LockedException exception) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("message", "Your account has been locked. Please contact support to unlock it.");
-            map.put("status", false);
-            return new ResponseEntity<>(map, HttpStatus.FORBIDDEN);
+            return new ResponseEntity<>(
+                    ApiResponse.error("Your account has been locked. Please contact support to unlock it."),
+                    HttpStatus.FORBIDDEN
+            );
         } catch (AuthenticationException exception) {
-            Map<String, Object> map = new HashMap<>();
-            map.put("message", "Invalid username or password");
-            map.put("status", false);
-            return new ResponseEntity<>(map, HttpStatus.UNAUTHORIZED);
+            return new ResponseEntity<>(ApiResponse.error("Invalid username or password"), HttpStatus.UNAUTHORIZED);
         }
 
         // set the authentication
@@ -212,7 +209,7 @@ public class AuthController {
             }
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("Error sending verification code: " + e.getMessage()));
+                    .body(ApiResponse.error("Error sending verification code"));
         }
     }
 
@@ -286,7 +283,7 @@ public class AuthController {
 
         } catch (Exception e) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("Error during phone authentication: " + e.getMessage()));
+                    .body(ApiResponse.error("Error during phone authentication"));
         }
     }
 
@@ -327,9 +324,8 @@ public class AuthController {
             return ResponseEntity.ok(ApiResponse.success("Password reset email sent!"));
         }
         catch (Exception e) {
-            e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                    .body(ApiResponse.error("Error sending password reset email: " + e.getMessage()));
+                    .body(ApiResponse.error("Error sending password reset email"));
         }
     }
 

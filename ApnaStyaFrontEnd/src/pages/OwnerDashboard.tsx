@@ -5,7 +5,7 @@ import Footer from "@/components/layout/Footer";
 import DemoRoleSwitcher, { getDemoUser, subscribeDemoUser } from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData, type Complaint, type OwnerProfile } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { toastSuccess, toastError } from "@/lib/app-toast";
+import { toastActionError, toastActionSuccess, toastSuccess, toastError } from "@/lib/app-toast";
 import type { PropertyRequest, PropertyDTO } from "@/lib/api";
 import {
   getProfile,
@@ -24,6 +24,14 @@ import {
   updateComplaintStatus as apiUpdateComplaintStatus,
   getUserIdByUsername,
   getDecodedToken,
+  getIncomingRentalApplications,
+  approveRentalApplication,
+  rejectRentalApplication,
+  getMyLeases,
+  getLeasePayments,
+  recordLeasePayment,
+  getPropertyReviews,
+  ownerRespondToPropertyReview,
   createProperty as apiCreateProperty,
   createPropertyWithImages,
   updateProperty as apiUpdateProperty,
@@ -35,6 +43,11 @@ import {
   type ComplaintMessageDTO,
   type ComplaintPriority,
   type ComplaintStatus,
+  type RentalApplicationDTO,
+  type LeaseDTO,
+  type LeasePaymentDTO,
+  type LeasePaymentMode,
+  type PropertyReviewDTO,
 } from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
@@ -59,7 +72,11 @@ import { OwnerProfileMuiForm } from "@/components/profile/OwnerProfileMuiForm";
 import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
 import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
-import { mergeComplaintMessageList, sortComplaintMessages } from "@/lib/complaintSocket";
+import {
+  complaintMessagesForDisplay,
+  mergeComplaintMessageList,
+  sortComplaintMessages,
+} from "@/lib/complaintSocket";
 import { emitComplaintRead } from "@/lib/complaintStompClient";
 import { ComplaintDetailAndChat } from "@/components/dashboard/ComplaintDetailAndChat";
 import { cn } from "@/lib/utils";
@@ -203,6 +220,18 @@ const OwnerDashboard = () => {
   const [complaintReadReceiptsByUser, setComplaintReadReceiptsByUser] = useState<Record<string, number>>({});
   const [complaintLiveChatOpen, setComplaintLiveChatOpen] = useState(false);
   const [complaintMessageDeletingId, setComplaintMessageDeletingId] = useState<number | null>(null);
+  const [rentalIncoming, setRentalIncoming] = useState<RentalApplicationDTO[]>([]);
+  const [ownerLeases, setOwnerLeases] = useState<LeaseDTO[]>([]);
+  const [ownerLeasePayments, setOwnerLeasePayments] = useState<LeasePaymentDTO[]>([]);
+  const [reviewDialog, setReviewDialog] = useState<{ open: boolean; propertyId: number | null; propertyTitle: string; reviews: PropertyReviewDTO[] }>({
+    open: false,
+    propertyId: null,
+    propertyTitle: "",
+    reviews: [],
+  });
+  const [reviewReplyDraft, setReviewReplyDraft] = useState<Record<number, string>>({});
+  const [reviewReplySavingId, setReviewReplySavingId] = useState<number | null>(null);
+  const [rentalLoading, setRentalLoading] = useState(false);
   const [complaintStatusUpdating, setComplaintStatusUpdating] = useState(false);
   const [statusUpdateDialog, setStatusUpdateDialog] = useState<{ open: boolean; complaintId: number | null; newStatus: ComplaintStatus | null; currentStatus: ComplaintStatus | null; message: string }>({ open: false, complaintId: null, newStatus: null, currentStatus: null, message: "" });
 
@@ -330,7 +359,8 @@ const OwnerDashboard = () => {
     getComplaintMessages(id)
       .then((res) => {
         const list = (res as { data?: ComplaintMessageDTO[] }).data;
-        if (Array.isArray(list)) setComplaintMessages(sortComplaintMessages(list));
+        if (Array.isArray(list))
+          setComplaintMessages(sortComplaintMessages(complaintMessagesForDisplay(list)));
       })
       .catch(() => setComplaintMessages([]));
     getComplaintReadReceipts(id)
@@ -360,7 +390,7 @@ const OwnerDashboard = () => {
 
   useComplaintMessagesSocket({
     complaintId: complaintSocketComplaintId,
-    enabled: Boolean(useRealApi && user),
+    enabled: Boolean(useRealApi && user && complaintLiveChatOpen && complaintSocketComplaintId != null),
     onMessage: (msg) => {
       setComplaintMessages((prev) => mergeComplaintMessageList(prev, msg));
     },
@@ -376,15 +406,22 @@ const OwnerDashboard = () => {
       });
     },
     onMessageDeleted: (messageId) => {
-      setComplaintMessages((prev) =>
-        prev.map((m) => (m.id === messageId ? { ...m, deleted: true, messageText: "" } : m)),
-      );
+      setComplaintMessages((prev) => prev.filter((m) => m.id !== messageId));
     },
   });
 
   useEffect(() => {
     if (!useRealApi || complaintSocketComplaintId == null || !complaintLiveChatOpen) return;
-    const ids = complaintMessages.map((m) => m.id).filter((x): x is number => x != null && x > 0);
+    const myId = decodedToken?.userId ?? null;
+    const myName = (user?.username ?? currentOwner).trim().toLowerCase();
+    const ids = complaintMessages
+      .filter((m) => {
+        const mid = m.id;
+        if (mid == null || mid <= 0) return false;
+        if (myId != null && myId > 0) return m.senderId !== myId;
+        return (m.senderUserName ?? "").trim().toLowerCase() !== myName;
+      })
+      .map((m) => m.id as number);
     if (ids.length === 0) return;
     const maxId = Math.max(...ids);
     const t = window.setTimeout(() => {
@@ -422,10 +459,20 @@ const OwnerDashboard = () => {
   const handleSendComplaintMessage = () => {
     if (!detailItem || detailItem.type !== "complaint" || !complaintMessageText.trim()) return;
     const id = (detailItem.data as ComplaintDTO).id;
+    const trimmed = complaintMessageText.trim();
+    const optimistic: ComplaintMessageDTO = {
+      id: null,
+      complaintId: id,
+      senderId: decodedToken?.userId ?? 0,
+      senderUserName: user?.username ?? currentOwner,
+      messageText: trimmed,
+      createdAt: new Date().toISOString(),
+    };
+    setComplaintMessages((prev) => mergeComplaintMessageList(prev, optimistic));
+    setComplaintMessageText("");
     setComplaintMessageSending(true);
-    sendComplaintMessage(id, complaintMessageText.trim())
+    sendComplaintMessage(id, trimmed)
       .then((res) => {
-        setComplaintMessageText("");
         const d = (res as { data?: ComplaintMessageDTO }).data;
         if (d) setComplaintMessages((prev) => mergeComplaintMessageList(prev, d));
       })
@@ -550,6 +597,35 @@ const OwnerDashboard = () => {
       .finally(() => setAgainstOptionsLoading(false));
   }, [useRealApi, complaintForm.propertyId, propertiesForAgainst]);
 
+  useEffect(() => {
+    if (!useRealApi || !user) return;
+    if (activeTab !== "requests" && activeTab !== "payments" && activeTab !== "overview") return;
+    setRentalLoading(true);
+    Promise.all([getIncomingRentalApplications(), getMyLeases()])
+      .then(async ([incomingRes, leasesRes]) => {
+        const incoming = (incomingRes as { data?: RentalApplicationDTO[] }).data;
+        const leases = (leasesRes as { data?: LeaseDTO[] }).data;
+        const ownerApps = Array.isArray(incoming) ? incoming.filter((x) => x.ownerUserName === currentOwner) : [];
+        const ownerOnlyLeases = Array.isArray(leases) ? leases.filter((l) => l.ownerUserName === currentOwner) : [];
+        setRentalIncoming(ownerApps);
+        setOwnerLeases(ownerOnlyLeases);
+        const paymentsNested = await Promise.all(
+          ownerOnlyLeases.map((l) =>
+            getLeasePayments(l.id)
+              .then((r) => ((r as { data?: LeasePaymentDTO[] }).data ?? []))
+              .catch(() => [] as LeasePaymentDTO[])
+          )
+        );
+        setOwnerLeasePayments(paymentsNested.flat());
+      })
+      .catch(() => {
+        setRentalIncoming([]);
+        setOwnerLeases([]);
+        setOwnerLeasePayments([]);
+      })
+      .finally(() => setRentalLoading(false));
+  }, [useRealApi, user, activeTab, currentOwner]);
+
   const ownerProfileApproved = demoMode ? isOwnerProfileApproved(currentOwner) : (apiApproved === true || apiProfile?.status === "APPROVED");
   const verificationStatus: VerificationStatus = demoMode
     ? (ownerProfiles.find((p) => p.ownerUser === currentOwner)?.status ?? null)
@@ -558,7 +634,20 @@ const OwnerDashboard = () => {
   const filteredMyProperties = assetStatusFilter ? myProperties.filter((p) => (p.status ?? "") === assetStatusFilter) : myProperties;
   const myBookings = bookings.filter(b => b.ownerName === currentOwner);
   const myPayments = payments.filter(p => p.ownerName === currentOwner);
-  const displayPayments = demoMode ? [] : myPayments;
+  const displayPayments = useRealApi
+    ? ownerLeasePayments.map((p) => {
+        const lease = ownerLeases.find((l) => l.id === p.leaseId);
+        return {
+          id: p.id,
+          propertyTitle: lease?.propertyTitle ?? `Lease #${p.leaseId}`,
+          tenantName: lease?.tenantUserName ?? "-",
+          month: p.periodMonth,
+          amount: Number(p.amountDue ?? 0),
+          status: p.status,
+          leaseId: p.leaseId,
+        };
+      })
+    : (demoMode ? [] : myPayments);
   const myComplaintsDemo = complaints.filter(c => c.raisedBy === currentOwner || c.againstUser === currentOwner);
   const myComplaintsAll = useRealApi ? apiComplaints : myComplaintsDemo;
   const myComplaints = complaintStatusFilter ? myComplaintsAll.filter((c) => c.status === complaintStatusFilter) : myComplaintsAll;
@@ -568,7 +657,9 @@ const OwnerDashboard = () => {
     : complaints.filter(c => c.againstUser === currentOwner && c.raisedByRole === "TENANT" && c.status !== "RESOLVED" && c.status !== "CLOSED");
   const myNotifications = demoMode ? [] : getNotificationsFor(currentOwner, "OWNER");
   const unreadCount = myNotifications.filter(n => !n.read).length;
-  const pendingRequests = myBookings.filter(b => b.status === "REQUESTED");
+  const pendingRequests = useRealApi
+    ? rentalIncoming.filter((r) => r.status === "PENDING")
+    : myBookings.filter(b => b.status === "REQUESTED");
   const decodedToken = getDecodedToken();
 
   const openPropertyAdd = () => {
@@ -715,7 +806,84 @@ const OwnerDashboard = () => {
     setActiveTab("assets");
   };
 
-  const handleBookingAction = (id: number, status: "APPROVED" | "REJECTED") => { updateBookingStatus(id, status); toastSuccess(`Booking ${status.toLowerCase()}`); };
+  const handleBookingAction = (id: number, status: "APPROVED" | "REJECTED") => {
+    updateBookingStatus(id, status);
+    if (status === "APPROVED") {
+      toastActionSuccess("approved", "Request", "The tenant can now proceed with next steps.");
+    } else {
+      toastActionSuccess("rejected", "Request", "The tenant has been notified politely.");
+    }
+  };
+
+  const refreshIncomingRequests = () =>
+    getIncomingRentalApplications().then((res) =>
+      setRentalIncoming(((res as { data?: RentalApplicationDTO[] }).data ?? []).filter((x) => x.ownerUserName === currentOwner))
+    );
+
+  const handleRentalRequestDecision = (a: RentalApplicationDTO, decision: "APPROVE" | "REJECT") => {
+    const isApprove = decision === "APPROVE";
+    const actionVerb = isApprove ? "Approve" : "Reject";
+    const apiCall = isApprove ? approveRentalApplication(a.id) : rejectRentalApplication(a.id);
+
+    openConfirm(
+      `${actionVerb} tenant request?`,
+      `${actionVerb} request for "${a.propertyTitle}" by ${a.tenantUserName}?`,
+      actionVerb,
+      isApprove ? "default" : "destructive",
+      () => {
+        apiCall
+          .then(() => refreshIncomingRequests())
+          .then(() => {
+            if (isApprove) {
+              toastActionSuccess("approved", "Request", "Tenant request has been approved.");
+            } else {
+              toastActionSuccess("rejected", "Request", "Tenant request has been rejected.");
+            }
+          })
+          .catch((err) => {
+            if (isApprove) {
+              toastActionError("approve", "request", (err as Error)?.message);
+            } else {
+              toastActionError("reject", "request", (err as Error)?.message);
+            }
+          });
+      }
+    );
+  };
+
+  const openReviewsForProperty = (propertyId: number, propertyTitle: string) => {
+    getPropertyReviews(propertyId)
+      .then((res) => {
+        const reviews = ((res as { data?: PropertyReviewDTO[] }).data) ?? [];
+        const draft: Record<number, string> = {};
+        for (const r of reviews) draft[r.id] = r.ownerResponse ?? "";
+        setReviewReplyDraft(draft);
+        setReviewDialog({ open: true, propertyId, propertyTitle, reviews });
+      })
+      .catch((err) => toastError("Could not load reviews", (err as Error)?.message));
+  };
+
+  const handleSaveReviewReply = (reviewId: number) => {
+    const text = (reviewReplyDraft[reviewId] ?? "").trim();
+    if (!text) {
+      toastError("Enter a response");
+      return;
+    }
+    setReviewReplySavingId(reviewId);
+    ownerRespondToPropertyReview(reviewId, text)
+      .then((res) => {
+        const updated = (res as { data?: PropertyReviewDTO }).data;
+        if (updated) {
+          setReviewDialog((prev) => ({
+            ...prev,
+            reviews: prev.reviews.map((r) => (r.id === reviewId ? updated : r)),
+          }));
+        }
+        toastSuccess("Response saved", "Your reply is now visible to users.");
+      })
+      .catch((err) => toastError("Could not save response", (err as Error)?.message))
+      .finally(() => setReviewReplySavingId(null));
+  };
 
   const refetchComplaints = () => {
     if (!useRealApi) return;
@@ -962,7 +1130,7 @@ const OwnerDashboard = () => {
         {/* Mobile horizontal tabs */}
         <div className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
           {tabs.map((t) => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
+            <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
               className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
               <t.icon className="h-3.5 w-3.5" />{t.label}
               {t.id === "requests" && pendingRequests.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingRequests.length}</span>}
@@ -986,7 +1154,7 @@ const OwnerDashboard = () => {
               </div>
               <div className="space-y-0.5">
                 {tabs.map((t) => (
-                  <button key={t.id} onClick={() => setActiveTab(t.id)}
+                  <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
                     className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-sky-300 dark:border-sky-600/60 bg-sky-50/80 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
                     <t.icon className="h-4 w-4 shrink-0" />{t.label}
                     {t.id === "requests" && pendingRequests.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingRequests.length}</span>}
@@ -1007,7 +1175,7 @@ const OwnerDashboard = () => {
                     { icon: IndianRupee, label: "Revenue", value: `₹${displayPayments.filter(p => p.status === "PAID").reduce((s, p) => s + p.amount, 0).toLocaleString()}`, sub: null, iconBg: "bg-sky-100 dark:bg-sky-900/30", iconColor: "text-sky-600 dark:text-sky-400", tab: "payments" },
                     { icon: FileText, label: "Complaints", value: useRealApi && apiComplaintsLoading ? "…" : myComplaintsAll.length, sub: openComplaintsCount > 0 ? `${openComplaintsCount} open` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "complaints" },
                   ].map(s => (
-                    <button key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
+                    <button type="button" key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
                       <div className="flex items-center justify-between mb-2">
                         <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${s.iconBg}`}><s.icon className={`h-4 w-4 ${s.iconColor}`} /></div>
                         <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -1138,6 +1306,13 @@ const OwnerDashboard = () => {
                           <div className="flex flex-wrap items-center justify-end gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
                             <button
                               type="button"
+                              onClick={(e) => { e.stopPropagation(); openReviewsForProperty(p.id, p.title); }}
+                              className="inline-flex items-center gap-1 rounded-full border border-violet-500/50 bg-transparent text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                            >
+                              <Eye className="h-3.5 w-3.5" /> Reviews
+                            </button>
+                            <button
+                              type="button"
                               onClick={(e) => { e.stopPropagation(); openPropertyEdit(p); }}
                               className="inline-flex items-center gap-1 rounded-full border border-sky-500/50 bg-transparent text-sky-600 dark:text-sky-400 hover:bg-sky-50 dark:hover:bg-sky-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
                             >
@@ -1163,29 +1338,86 @@ const OwnerDashboard = () => {
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                   <h2 className="text-base font-bold text-foreground">Tenant Requests</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">Approve or reject visit and booking requests from tenants.</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{useRealApi ? "Approve or reject rental applications from tenants." : "Approve or reject visit and booking requests from tenants."}</p>
                 </div>
-                {myBookings.length === 0 ? (
+                {useRealApi ? (
+                  rentalLoading ? (
+                    <div className="py-8 text-center text-sm text-muted-foreground">Loading rental requests...</div>
+                  ) : rentalIncoming.length === 0 ? (
+                    <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
+                      <Users className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
+                      <p className="text-sm font-medium text-foreground">No rental requests yet</p>
+                      <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">Applications submitted by tenants will appear here.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {rentalIncoming.map((a) => (
+                        <div key={a.id} className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm font-semibold text-card-foreground truncate">{a.propertyTitle}</p>
+                              <p className="text-xs text-muted-foreground truncate mt-0.5">{a.tenantUserName} • Move-in {new Date(a.moveInDate).toLocaleDateString()}</p>
+                              <p className="text-xs text-muted-foreground">₹{Number(a.proposedRent ?? 0).toLocaleString()} for {a.leaseMonths} months</p>
+                            </div>
+                            <div className="shrink-0">
+                              <Badge variant={a.status === "APPROVED" ? "default" : a.status === "PENDING" ? "secondary" : "destructive"} className="text-[10px]">{a.status}</Badge>
+                            </div>
+                          </div>
+                          {a.status === "PENDING" && (
+                            <div className="flex flex-wrap items-center justify-end gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                              <button
+                                type="button"
+                                onClick={() => handleRentalRequestDecision(a, "APPROVE")}
+                                className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                              >
+                                <CheckCircle className="h-3.5 w-3.5" /> Approve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleRentalRequestDecision(a, "REJECT")}
+                                className="inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-transparent text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                              >
+                                <X className="h-3.5 w-3.5" /> Reject
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                ) : myBookings.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <Users className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
                     <p className="text-sm font-medium text-foreground">No tenant requests yet</p>
                     <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">When tenants request a visit or booking for your properties, they will appear here for you to approve or reject.</p>
                   </div>
                 ) : (
-                <div className="space-y-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {myBookings.map(b => (
-                    <div key={b.id} className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 dark:bg-muted/10 p-3 hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
+                    <div key={b.id} className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]">
                       <div className="flex items-start justify-between gap-2 cursor-pointer" onClick={() => setDetailItem({ type: "request", data: b })}>
-                        <div className="min-w-0"><p className="text-sm font-semibold text-card-foreground truncate">{b.propertyTitle}</p><p className="text-xs text-muted-foreground">{b.tenantName} • {new Date(b.visitDate).toLocaleDateString()}</p></div>
+                        <div className="min-w-0 flex-1"><p className="text-sm font-semibold text-card-foreground truncate">{b.propertyTitle}</p><p className="text-xs text-muted-foreground truncate mt-0.5">{b.tenantName} • {new Date(b.visitDate).toLocaleDateString()}</p></div>
                         <div className="flex items-center gap-1.5">
                           <Badge variant={b.status === "APPROVED" ? "default" : b.status === "REQUESTED" ? "secondary" : "destructive"} className="text-[10px] shrink-0">{b.status}</Badge>
                           <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                         </div>
                       </div>
                       {b.status === "REQUESTED" && (
-                        <div className="flex gap-2 mt-2">
-                          <Button size="sm" className="flex-1 h-7 text-xs" onClick={() => openConfirm("Approve request?", "This will approve the booking/visit request.", "Approve", "default", () => handleBookingAction(b.id, "APPROVED"))}><CheckCircle className="h-3 w-3 mr-1" /> Approve</Button>
-                          <Button size="sm" variant="destructive" className="flex-1 h-7 text-xs" onClick={() => openConfirm("Reject request?", "This will reject the booking/visit request.", "Reject", "destructive", () => handleBookingAction(b.id, "REJECTED"))}><X className="h-3 w-3 mr-1" /> Reject</Button>
+                        <div className="flex flex-wrap items-center justify-end gap-2 mt-3 pt-3 border-t border-slate-200 dark:border-slate-700">
+                          <button
+                            type="button"
+                            onClick={() => openConfirm("Approve request?", "This will approve the booking/visit request.", "Approve", "default", () => handleBookingAction(b.id, "APPROVED"))}
+                            className="inline-flex items-center gap-1 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                          >
+                            <CheckCircle className="h-3.5 w-3.5" /> Approve
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openConfirm("Reject request?", "This will reject the booking/visit request.", "Reject", "destructive", () => handleBookingAction(b.id, "REJECTED"))}
+                            className="inline-flex items-center gap-1 rounded-full border border-red-500/50 bg-transparent text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 px-2.5 py-1 text-xs font-medium transition-colors"
+                          >
+                            <X className="h-3.5 w-3.5" /> Reject
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1199,9 +1431,11 @@ const OwnerDashboard = () => {
               <div className="space-y-4">
                 <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
                   <h2 className="text-base font-bold text-foreground">Payments Received</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">Rent and other payments from tenants.</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{useRealApi ? "Record manual rent collection and view lease dues." : "Rent and other payments from tenants."}</p>
                 </div>
-                {displayPayments.length === 0 ? (
+                {rentalLoading && useRealApi ? (
+                  <div className="py-8 text-center text-sm text-muted-foreground">Loading payments...</div>
+                ) : displayPayments.length === 0 ? (
                   <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
                     <CreditCard className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
                     <p className="text-sm font-medium text-foreground">No payments yet</p>
@@ -1215,6 +1449,38 @@ const OwnerDashboard = () => {
                       <div className="min-w-0"><p className="text-sm font-semibold text-card-foreground truncate">{p.propertyTitle}</p><p className="text-xs text-muted-foreground">{p.tenantName} • {p.month}</p></div>
                       <div className="flex items-center gap-2">
                         <div className="text-right shrink-0"><p className="text-sm font-bold text-foreground">₹{p.amount.toLocaleString()}</p><Badge variant={p.status === "PAID" ? "default" : p.status === "OVERDUE" ? "destructive" : "secondary"} className="text-[10px]">{p.status}</Badge></div>
+                        {useRealApi && p.status !== "PAID" && (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const amount = window.prompt("Enter received amount", String(p.amount));
+                              if (!amount) return;
+                              const n = Number(amount);
+                              if (!Number.isFinite(n) || n <= 0) {
+                                toastError("Invalid amount");
+                                return;
+                              }
+                              const mode = (window.prompt("Payment mode (CASH/BANK/UPI/OTHER)", "CASH") || "CASH").toUpperCase() as LeasePaymentMode;
+                              recordLeasePayment((p as { leaseId: number }).leaseId, {
+                                paymentId: p.id,
+                                amountPaid: n,
+                                paymentMode: mode,
+                              })
+                                .then(() => Promise.all([getIncomingRentalApplications(), getMyLeases()]))
+                                .then(() => {
+                                  toastSuccess("Payment recorded");
+                                  setActiveTab("payments");
+                                })
+                                .catch((err) => toastError("Payment record failed", (err as Error)?.message));
+                            }}
+                          >
+                            Record
+                          </Button>
+                        )}
                         <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                       </div>
                     </div>
@@ -1306,6 +1572,7 @@ const OwnerDashboard = () => {
                           c={c}
                           propertyTitle={propertyTitle}
                           currentUserName={user?.username ?? currentOwner}
+                          currentUserId={decodedToken?.userId ?? null}
                           useRealApi={Boolean(useRealApi)}
                           complaintIdForChat={complaintSocketComplaintId}
                           messages={complaintMessages}
@@ -1662,6 +1929,63 @@ const OwnerDashboard = () => {
               </Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={reviewDialog.open}
+        onOpenChange={(open) => !open && setReviewDialog({ open: false, propertyId: null, propertyTitle: "", reviews: [] })}
+      >
+        <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Property Reviews - {reviewDialog.propertyTitle || "Listing"}</DialogTitle>
+          </DialogHeader>
+          {reviewDialog.reviews.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No reviews available for this property yet.</p>
+          ) : (
+            <div className="max-h-[65vh] overflow-y-auto space-y-3">
+              {reviewDialog.reviews.map((r) => (
+                <div key={r.id} className="rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{r.reviewerUserName}</p>
+                      <p className="text-xs text-muted-foreground">{r.rating}/5 {r.verifiedStay ? "• Verified stay" : ""}</p>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground">{new Date(r.createdAt).toLocaleDateString()}</p>
+                  </div>
+                  <p className="text-sm text-foreground mt-2">{r.comment}</p>
+                  <div className="mt-3 space-y-2">
+                    <Label className="text-xs">Owner response</Label>
+                    <Textarea
+                      value={reviewReplyDraft[r.id] ?? ""}
+                      onChange={(e) => setReviewReplyDraft((prev) => ({ ...prev, [r.id]: e.target.value }))}
+                      rows={2}
+                      placeholder="Write a polite response to this review..."
+                    />
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        onClick={() => handleSaveReviewReply(r.id)}
+                        disabled={reviewReplySavingId === r.id}
+                      >
+                        {reviewReplySavingId === r.id ? "Saving..." : "Save response"}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setReviewDialog({ open: false, propertyId: null, propertyTitle: "", reviews: [] })}
+            >
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -31,16 +31,12 @@ const Properties = () => {
   }));
   const [sortBy, setSortBy] = useState("newest");
   const [searchLocation, setSearchLocation] = useState(locationParam);
-  const buildApiParams = (): { city?: string; state?: string; propertyType?: string } => {
-    const params: { city?: string; state?: string; propertyType?: string } = {};
+  const buildApiParams = (): { city?: string } => {
+    const params: { city?: string } = {};
     const parts = locationParam.split(",").map((s) => s.trim()).filter(Boolean);
-    if (parts.length >= 2) {
-      params.city = parts[0];
-      params.state = parts[1];
-    } else if (parts.length === 1 && parts[0]) {
+    if (parts.length >= 1 && parts[0]) {
       params.city = parts[0];
     }
-    if (typeParam) params.propertyType = typeParam;
     return params;
   };
 

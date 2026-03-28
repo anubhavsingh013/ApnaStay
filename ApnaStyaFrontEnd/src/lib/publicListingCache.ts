@@ -48,8 +48,10 @@ function publicParamsCacheKey(params: PublicPropertySearchParams | undefined): s
   if (!params) return "";
   return [
     params.city ?? "",
-    params.state ?? "",
-    params.propertyType ?? "",
+    params.pinCode ?? "",
+    params.furnishing ?? "",
+    params.minBedrooms != null ? String(params.minBedrooms) : "",
+    params.minBathrooms != null ? String(params.minBathrooms) : "",
     params.minPrice != null ? String(params.minPrice) : "",
     params.maxPrice != null ? String(params.maxPrice) : "",
   ].join("|");

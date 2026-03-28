@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Check, CheckCheck, Send, Trash2 } from "lucide-react";
+import { Check, Send, Trash2 } from "lucide-react";
 import type { ComplaintMessageDTO } from "@/lib/api";
 import {
   calendarDayKey,
@@ -22,10 +22,38 @@ function isReadByOthers(
   return Object.entries(readReceiptsByUser).some(([user, last]) => normUser(user) !== me && last >= messageId);
 }
 
+/**
+ * WhatsApp-like double ✓: same size checks, second shifted only a few px so they nest (not two separate icons).
+ */
+function OutgoingReceiptTicks({ read }: { read: boolean }) {
+  return (
+    <span
+      className={cn(
+        "relative inline-block h-4 w-[18px] shrink-0 align-middle",
+        read ? "text-[#25D366]" : "text-[#8696a0] dark:text-[#95b7ae]",
+      )}
+      aria-hidden
+    >
+      <Check
+        className="absolute bottom-0 left-0 z-0 h-[13px] w-[13px]"
+        strokeWidth={2.75}
+        absoluteStrokeWidth
+      />
+      <Check
+        className="absolute bottom-0 left-[4px] z-[1] h-[13px] w-[13px]"
+        strokeWidth={2.75}
+        absoluteStrokeWidth
+      />
+    </span>
+  );
+}
+
 export type ComplaintChatRoomProps = {
   complaintId: number;
   messages: ComplaintMessageDTO[];
   currentUserName: string;
+  /** Stable identity for outgoing bubbles; falls back to username match. */
+  currentUserId?: number | string | null;
   readReceiptsByUser: Record<string, number>;
   typingUserNames: string[];
   messageText: string;
@@ -47,6 +75,7 @@ export function ComplaintChatRoom({
   complaintId,
   messages,
   currentUserName,
+  currentUserId = null,
   readReceiptsByUser,
   typingUserNames,
   messageText,
@@ -60,7 +89,14 @@ export function ComplaintChatRoom({
   deletingMessageId,
 }: ComplaintChatRoomProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Hide soft-deleted messages entirely (unsend-style). */
+  const visibleMessages = messages.filter((m) => !m.deleted);
   const me = normUser(currentUserName);
+  const myNumericId = (() => {
+    if (currentUserId == null) return null;
+    const n = typeof currentUserId === "number" ? currentUserId : Number(currentUserId);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -124,7 +160,7 @@ export function ComplaintChatRoom({
         role="log"
         aria-live="polite"
       >
-        {messages.length === 0 && (
+        {visibleMessages.length === 0 && (
           <div className="flex h-52 items-center justify-center">
             <p className="rounded-lg bg-black/[0.04] px-4 py-2 text-sm text-[#54656f] dark:bg-white/[0.06] dark:text-[#8696a0]">
               {emptyLabel}
@@ -132,22 +168,29 @@ export function ComplaintChatRoom({
           </div>
         )}
 
-        {messages.map((m, idx) => {
-          const isMine = normUser(m.senderUserName) === me;
-          const isDeleted = Boolean(m.deleted);
+        {visibleMessages.map((m, idx) => {
+          const senderNumeric = Number(m.senderId);
+          const isMine =
+            (myNumericId != null && Number.isFinite(senderNumeric) && senderNumeric === myNumericId) ||
+            (myNumericId == null && normUser(m.senderUserName) === me);
           const mid = m.id != null && m.id > 0 ? m.id : 0;
-          const read =
-            isMine && mid > 0 && !isDeleted ? isReadByOthers(mid, currentUserName, readReceiptsByUser) : false;
+          const read = isMine && mid > 0 ? isReadByOthers(mid, currentUserName, readReceiptsByUser) : false;
           const day = calendarDayKey(m.createdAt);
-          const prevDay = idx > 0 ? calendarDayKey(messages[idx - 1]?.createdAt) : "";
+          const prevDay = idx > 0 ? calendarDayKey(visibleMessages[idx - 1]?.createdAt) : "";
           const showDay = Boolean(day && day !== prevDay);
 
-          const prev = messages[idx - 1];
+          const prev = visibleMessages[idx - 1];
           const sameSenderAsPrev = prev && normUser(prev.senderUserName) === normUser(m.senderUserName);
           const tightTop = sameSenderAsPrev && !showDay;
 
           return (
-            <div key={m.id != null && m.id > 0 ? m.id : `${m.senderUserName}-${m.createdAt ?? ""}-${m.messageText.slice(0, 48)}`}>
+            <div
+              key={
+                m.id != null && m.id > 0
+                  ? `msg-${m.id}`
+                  : `msg-${idx}-${m.senderUserName}-${String(m.createdAt ?? "")}-${m.messageText.length}`
+              }
+            >
               {showDay && (
                 <div className="my-3 flex justify-center">
                   <span className="rounded-lg bg-[#ffecb3]/90 px-3 py-1 text-[11px] font-medium text-[#54656f] shadow-sm dark:bg-[#182229] dark:text-[#8696a0]">
@@ -167,19 +210,15 @@ export function ComplaintChatRoom({
                   {!isMine && (
                     <p className="mb-0.5 text-[12px] font-semibold text-[#008069] dark:text-[#00a884]">{m.senderUserName}</p>
                   )}
-                  {isDeleted ? (
-                    <p className="text-[13px] italic text-[#667781] dark:text-[#8696a0]">This message was deleted</p>
-                  ) : (
-                    <p className="whitespace-pre-wrap break-words">{m.messageText}</p>
-                  )}
+                  <p className="whitespace-pre-wrap break-words">{m.messageText}</p>
                   <div
                     className={cn(
-                      "mt-1 flex min-h-[1.125rem] flex-nowrap items-center justify-end gap-x-1 overflow-visible select-none",
+                      "mt-1 flex min-h-[1.125rem] flex-nowrap items-center justify-end gap-x-0.5 overflow-visible select-none",
                       isMine ? "text-[#667781] dark:text-[#95b7ae]" : "text-[#667781] dark:text-[#8696a0]",
                     )}
                   >
                     <span className="shrink-0 text-[11px] tabular-nums leading-none">{formatChatMessageTime(m.createdAt)}</span>
-                    {isMine && mid > 0 && !isDeleted && onDeleteMessage && (
+                    {isMine && mid > 0 && onDeleteMessage && (
                       <button
                         type="button"
                         className="shrink-0 rounded p-0.5 text-[#667781] hover:bg-black/5 hover:text-rose-600 dark:hover:bg-white/10 dark:hover:text-rose-400"
@@ -191,16 +230,12 @@ export function ComplaintChatRoom({
                         <Trash2 className="h-3.5 w-3.5" strokeWidth={2.25} />
                       </button>
                     )}
-                    {isMine && mid > 0 && !isDeleted && (
+                    {isMine && mid > 0 && (
                       <span
-                        className="inline-flex h-4 min-w-[1.15rem] shrink-0 items-center justify-end overflow-visible leading-none"
-                        title={read ? "Read" : "Sent"}
+                        className="inline-flex shrink-0 items-center justify-end overflow-visible leading-none"
+                        title={read ? "Read" : "Delivered"}
                       >
-                        {read ? (
-                          <CheckCheck className="h-4 w-4 text-[#53bdeb]" strokeWidth={2.25} absoluteStrokeWidth />
-                        ) : (
-                          <Check className="h-4 w-4 text-[#667781] dark:text-[#95b7ae]" strokeWidth={2.25} absoluteStrokeWidth />
-                        )}
+                        <OutgoingReceiptTicks read={read} />
                       </span>
                     )}
                   </div>

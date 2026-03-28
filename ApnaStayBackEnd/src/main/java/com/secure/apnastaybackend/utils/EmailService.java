@@ -41,4 +41,16 @@ public class EmailService {
             );
         }
     }
+
+    public void sendGenericEmail(String to, String subject, String content) {
+        try {
+            SimpleMailMessage message = new SimpleMailMessage();
+            message.setTo(to);
+            message.setSubject(subject);
+            message.setText(content);
+            mailSender.send(message);
+        } catch (MailException ex) {
+            log.warn("Failed generic mail to {}: {}", to, ex.getMessage());
+        }
+    }
 }

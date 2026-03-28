@@ -32,5 +32,7 @@ public class PropertyPublicDTO {
     private String city;
     private String state;
     private List<String> images;
+    private Boolean verifiedListing;
+    private Boolean verifiedOwner;
 }
 

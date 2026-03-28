@@ -129,6 +129,14 @@ export interface BackendErrorResponse {
 /** Build a user-friendly error message from backend error response */
 export function getApiErrorMessage(data: BackendErrorResponse, fallback = "Something went wrong"): string {
   const msg = (data.message || (data as { error?: string }).error || "").trim().replace(/^Error:\s*/i, "");
+  const knownMap: Record<string, string> = {
+    "You cannot apply to your own property": "You cannot apply to your own property.",
+    "This property is already rented": "This property is already rented.",
+    "An active Rent already exists for this property": "This property already has an active Rent.",
+    "You already have an active application for this property": "You already applied for this property.",
+    "Move-in date must be today or a future date": "Please choose a valid move-in date.",
+  };
+  if (msg && knownMap[msg]) return knownMap[msg];
   const list = data.validationErrors?.filter((e) => e?.field && e?.message) ?? [];
   if (list.length === 0) return msg || fallback;
   const fieldLabels: Record<string, string> = {
@@ -553,6 +561,8 @@ export interface PropertyDTO {
   status: string;
   createdAt: string;
   updatedAt: string;
+  verifiedListing?: boolean;
+  verifiedOwner?: boolean;
 }
 
 export async function getProperties() {
@@ -562,27 +572,71 @@ export async function getProperties() {
 /** GET /api/property/public — list available properties for tenants/buyers (no auth required) */
 export interface PublicPropertySearchParams {
   city?: string;
-  state?: string;
-  propertyType?: string;
+  pinCode?: string;
+  furnishing?: string;
+  amenities?: string[];
+  minBedrooms?: number;
+  minBathrooms?: number;
   minPrice?: number;
   maxPrice?: number;
+  minLatitude?: number;
+  maxLatitude?: number;
+  minLongitude?: number;
+  maxLongitude?: number;
+  sortBy?: "newest" | "price" | "rating";
+  sortDir?: "asc" | "desc";
+  page?: number;
+  size?: number;
 }
-export async function getPublicProperties(params?: PublicPropertySearchParams) {
+export interface PagedResponse<T> {
+  items: T[];
+  page: number;
+  size: number;
+  totalItems: number;
+  totalPages: number;
+  hasNext: boolean;
+}
+export async function searchPublicProperties(params?: PublicPropertySearchParams) {
   const search = new URLSearchParams();
   if (params?.city) search.set("city", params.city);
-  if (params?.state) search.set("state", params.state);
-  if (params?.propertyType) search.set("propertyType", params.propertyType);
+  if (params?.pinCode) search.set("pinCode", params.pinCode);
+  if (params?.furnishing) search.set("furnishing", params.furnishing);
+  if (params?.minBedrooms != null) search.set("minBedrooms", String(params.minBedrooms));
+  if (params?.minBathrooms != null) search.set("minBathrooms", String(params.minBathrooms));
   if (params?.minPrice != null) search.set("minPrice", String(params.minPrice));
   if (params?.maxPrice != null) search.set("maxPrice", String(params.maxPrice));
+  if (params?.amenities?.length) params.amenities.forEach((a) => search.append("amenities", a));
+  if (params?.minLatitude != null) search.set("minLatitude", String(params.minLatitude));
+  if (params?.maxLatitude != null) search.set("maxLatitude", String(params.maxLatitude));
+  if (params?.minLongitude != null) search.set("minLongitude", String(params.minLongitude));
+  if (params?.maxLongitude != null) search.set("maxLongitude", String(params.maxLongitude));
+  if (params?.sortBy) search.set("sortBy", params.sortBy);
+  if (params?.sortDir) search.set("sortDir", params.sortDir);
+  if (params?.page != null) search.set("page", String(params.page));
+  if (params?.size != null) search.set("size", String(params.size));
   const q = search.toString();
-  return apiRequest<{ success: boolean; data: PropertyDTO[]; message?: string }>(
-    `/api/property/public${q ? `?${q}` : ""}`
+  return apiRequest<{ success: boolean; data: PagedResponse<PropertyDTO>; message?: string }>(
+    `/api/property/public/search${q ? `?${q}` : ""}`,
+    { auth: false }
   );
+}
+
+/** Backward-compatible wrapper used by existing cache/listing UI */
+export async function getPublicProperties(params?: PublicPropertySearchParams) {
+  const res = await searchPublicProperties(params);
+  return { ...res, data: res.data?.items ?? [] };
 }
 
 /** GET /api/property/public/featured — featured properties for homepage */
 export async function getFeaturedProperties() {
-  return apiRequest<{ success: boolean; data: PropertyDTO[]; message?: string }>("/api/property/public/featured");
+  return apiRequest<{ success: boolean; data: PropertyDTO[]; message?: string }>("/api/property/public/featured", { auth: false });
+}
+
+export async function getSimilarPublicProperties(propertyId: number, limit = 6) {
+  return apiRequest<{ success: boolean; data: PropertyDTO[]; message?: string }>(
+    `/api/property/public/${propertyId}/similar?limit=${encodeURIComponent(String(limit))}`,
+    { auth: false }
+  );
 }
 
 /** GET /api/property/admin/all — get all properties (admin view) */
@@ -960,12 +1014,17 @@ export interface ComplaintDTO {
   description: string;
   status: ComplaintStatus;
   priority: ComplaintPriority;
+  category?: string | null;
   resolutionNote: string | null;
   resolvedAt: string | null;
   resolvedByUserId: number | null;
   resolvedByUserName: string | null;
   createdAt: string;
   updatedAt: string;
+  firstResponseAt?: string | null;
+  responseDueAt?: string | null;
+  resolutionDueAt?: string | null;
+  csatScore?: number | null;
   messages: ComplaintMessageDTO[] | null;
 }
 
@@ -1034,6 +1093,13 @@ export async function updateComplaintStatus(complaintId: number, status: Complai
   );
 }
 
+export async function submitComplaintCsat(complaintId: number, score: number) {
+  return apiRequest<{ success: boolean; data: ComplaintDTO; message?: string; timestamp?: string }>(
+    `/api/complaints/${complaintId}/csat?score=${encodeURIComponent(String(score))}`,
+    { method: "PUT" }
+  );
+}
+
 /** GET /api/user/id-by-username?username= — resolve username to user id (for complaint "against" dropdown). Returns null if not found. */
 export async function getUserIdByUsername(username: string): Promise<number | null> {
   if (!username?.trim()) return null;
@@ -1089,4 +1155,273 @@ export async function markComplaintThreadRead(complaintId: number, lastReadMessa
     `/api/complaints/${complaintId}/read`,
     { method: "PUT", body: { lastReadMessageId } }
   );
+}
+
+export type RentalApplicationStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+export type LeaseStatus = "ACTIVE" | "ENDED" | "TERMINATED";
+export type LeasePaymentStatus = "PENDING" | "PARTIAL" | "PAID" | "OVERDUE";
+export type LeasePaymentMode = "CASH" | "BANK" | "UPI" | "OTHER";
+
+export interface RentalApplicationDTO {
+  id: number;
+  propertyId: number;
+  propertyTitle: string;
+  tenantId: number;
+  tenantUserName: string;
+  ownerId: number;
+  ownerUserName: string;
+  proposedRent: number;
+  moveInDate: string;
+  leaseMonths: number;
+  securityDeposit?: number | null;
+  message?: string | null;
+  status: RentalApplicationStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LeasePaymentDTO {
+  id: number;
+  leaseId: number;
+  periodMonth: string;
+  amountDue: number;
+  amountPaid: number;
+  dueDate: string;
+  paidAt?: string | null;
+  status: LeasePaymentStatus;
+  paymentMode?: LeasePaymentMode | null;
+  referenceNote?: string | null;
+  recordedByUserId?: number | null;
+  recordedByUserName?: string | null;
+}
+
+export interface LeaseDTO {
+  id: number;
+  propertyId: number;
+  propertyTitle: string;
+  tenantId: number;
+  tenantUserName: string;
+  ownerId: number;
+  ownerUserName: string;
+  startDate: string;
+  endDate: string;
+  monthlyRent: number;
+  securityDeposit?: number | null;
+  dueDayOfMonth: number;
+  status: LeaseStatus;
+  createdAt: string;
+  updatedAt: string;
+  payments?: LeasePaymentDTO[];
+}
+
+export interface RentalApplicationTimelineEventDTO {
+  stage: string;
+  occurredAt: string;
+}
+
+export interface LeaseDashboardDTO {
+  leaseId: number;
+  nextDueDate: string | null;
+  nextDueAmount: number;
+  overdueAmount: number;
+  totalPaid: number;
+  totalDue: number;
+  recentPayments: LeasePaymentDTO[];
+}
+
+export interface AuditLogDTO {
+  id: number;
+  action: string;
+  username: string;
+  propertyId?: number | null;
+  propertyContent?: string | null;
+  timestamp: string;
+}
+
+export interface RentalApplicationCreateRequest {
+  propertyId: number;
+  proposedRent: number;
+  moveInDate: string;
+  leaseMonths: number;
+  securityDeposit?: number;
+  message?: string;
+}
+
+export async function createRentalApplication(body: RentalApplicationCreateRequest) {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO; message?: string; timestamp?: string }>(
+    "/api/rentals/applications",
+    { method: "POST", body }
+  );
+}
+
+export async function getMyRentalApplications() {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO[]; message?: string; timestamp?: string }>(
+    "/api/rental/my-application"
+  );
+}
+
+/** Clear naming alias for tenant-side submitted applications */
+export async function getSubmittedRentalApplicationsForCurrentUser() {
+  return getMyRentalApplications();
+}
+
+export async function getIncomingRentalApplications() {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO[]; message?: string; timestamp?: string }>(
+    "/api/rentals/applications/incoming"
+  );
+}
+
+/** Clear naming alias for owner/admin incoming applications */
+export async function getIncomingRentalApplicationsForOwner() {
+  return getIncomingRentalApplications();
+}
+
+export async function approveRentalApplication(applicationId: number) {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/applications/${applicationId}/approve`,
+    { method: "PUT" }
+  );
+}
+
+export async function rejectRentalApplication(applicationId: number) {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/applications/${applicationId}/reject`,
+    { method: "PUT" }
+  );
+}
+
+export async function cancelRentalApplication(applicationId: number) {
+  return apiRequest<{ success: boolean; data: RentalApplicationDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/applications/${applicationId}/cancel`,
+    { method: "PUT" }
+  );
+}
+
+export async function getMyLeases() {
+  return apiRequest<{ success: boolean; data: LeaseDTO[]; message?: string; timestamp?: string }>(
+    "/api/rentals/rented"
+  );
+}
+
+/** Clear naming alias for tenant-side active leases */
+export async function getActiveLeasesForCurrentUser() {
+  return getMyLeases();
+}
+
+export async function getLeaseById(leaseId: number) {
+  return apiRequest<{ success: boolean; data: LeaseDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/leases/${leaseId}`
+  );
+}
+
+export async function getRentalApplicationTimeline(applicationId: number) {
+  return apiRequest<{ success: boolean; data: RentalApplicationTimelineEventDTO[]; message?: string; timestamp?: string }>(
+    `/api/rentals/applications/${applicationId}/timeline`
+  );
+}
+
+export async function getLeaseDashboard(leaseId: number) {
+  return apiRequest<{ success: boolean; data: LeaseDashboardDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/leases/${leaseId}/dashboard`
+  );
+}
+
+export interface SavedPropertyDTO {
+  id: number;
+  propertyId: number;
+  propertyTitle: string;
+  price: number;
+  city: string;
+  state: string;
+  savedAt: string;
+}
+
+export interface SavedSearchDTO {
+  id: number;
+  name: string;
+  city?: string | null;
+  pinCode?: string | null;
+  minBedrooms?: number | null;
+  minBathrooms?: number | null;
+  minPrice?: number | null;
+  maxPrice?: number | null;
+  furnishing?: string | null;
+  alertsEnabled: boolean;
+  lastAlertCheckedAt?: string | null;
+  createdAt: string;
+}
+
+export interface SavedSearchRequest {
+  name: string;
+  city?: string;
+  pinCode?: string;
+  minBedrooms?: number;
+  minBathrooms?: number;
+  minPrice?: number;
+  maxPrice?: number;
+  furnishing?: string;
+  alertsEnabled?: boolean;
+}
+
+export async function saveProperty(propertyId: number) {
+  return apiRequest<{ success: boolean; data: SavedPropertyDTO; message?: string }>(`/api/engagement/saved-properties/${propertyId}`, { method: "POST" });
+}
+export async function getSavedProperties() {
+  return apiRequest<{ success: boolean; data: SavedPropertyDTO[]; message?: string }>("/api/engagement/saved-properties");
+}
+export async function removeSavedProperty(propertyId: number) {
+  return apiRequest<{ success: boolean; message?: string }>(`/api/engagement/saved-properties/${propertyId}`, { method: "DELETE" });
+}
+export async function createSavedSearch(body: SavedSearchRequest) {
+  return apiRequest<{ success: boolean; data: SavedSearchDTO; message?: string }>("/api/engagement/saved-searches", { method: "POST", body });
+}
+export async function getSavedSearches() {
+  return apiRequest<{ success: boolean; data: SavedSearchDTO[]; message?: string }>("/api/engagement/saved-searches");
+}
+export async function runSavedSearchAlertCheck(searchId: number) {
+  return apiRequest<{ success: boolean; data: { newMatches: number }; message?: string }>(`/api/engagement/saved-searches/${searchId}/run-alert-check`, { method: "POST" });
+}
+
+export interface PropertyReviewDTO {
+  id: number;
+  propertyId: number;
+  reviewerUserName: string;
+  rating: number;
+  comment: string;
+  verifiedStay: boolean;
+  ownerResponse?: string | null;
+  createdAt: string;
+}
+
+export async function getPropertyReviews(propertyId: number) {
+  return apiRequest<{ success: boolean; data: PropertyReviewDTO[]; message?: string }>(`/api/property-reviews/property/${propertyId}`, { auth: false });
+}
+export async function createPropertyReview(propertyId: number, body: { rating: number; comment: string }) {
+  return apiRequest<{ success: boolean; data: PropertyReviewDTO; message?: string }>(`/api/property-reviews/property/${propertyId}`, { method: "POST", body });
+}
+export async function ownerRespondToPropertyReview(reviewId: number, ownerResponse: string) {
+  return apiRequest<{ success: boolean; data: PropertyReviewDTO; message?: string }>(
+    `/api/property-reviews/${reviewId}/owner-response`,
+    { method: "PUT", body: { ownerResponse } }
+  );
+}
+
+export async function getLeasePayments(leaseId: number) {
+  return apiRequest<{ success: boolean; data: LeasePaymentDTO[]; message?: string; timestamp?: string }>(
+    `/api/rentals/leases/${leaseId}/payments`
+  );
+}
+
+export async function recordLeasePayment(
+  leaseId: number,
+  payload: { paymentId: number; amountPaid: number; paymentMode?: LeasePaymentMode; referenceNote?: string }
+) {
+  return apiRequest<{ success: boolean; data: LeasePaymentDTO; message?: string; timestamp?: string }>(
+    `/api/rentals/leases/${leaseId}/payments`,
+    { method: "POST", body: payload }
+  );
+}
+
+export async function getAuditLogs() {
+  return apiRequest<AuditLogDTO[]>("/api/audit");
 }

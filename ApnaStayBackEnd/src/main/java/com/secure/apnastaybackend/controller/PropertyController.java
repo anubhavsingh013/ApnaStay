@@ -2,6 +2,7 @@ package com.secure.apnastaybackend.controller;
 
 import com.secure.apnastaybackend.dto.request.PropertyRequest;
 import com.secure.apnastaybackend.dto.response.ApiResponse;
+import com.secure.apnastaybackend.dto.response.PagedResponse;
 import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
 import com.secure.apnastaybackend.entity.AppRole;
@@ -25,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.math.BigDecimal;
 
 @RestController
 @RequestMapping("/api/property")
@@ -184,6 +186,39 @@ public class PropertyController {
                         properties
                 )
         );
+    }
+
+    @GetMapping("/public/search")
+    public ResponseEntity<ApiResponse<PagedResponse<PropertyPublicDTO>>> searchPublicProperties(
+            @RequestParam(required = false) String city,
+            @RequestParam(required = false) String pinCode,
+            @RequestParam(required = false) Integer minBedrooms,
+            @RequestParam(required = false) Integer minBathrooms,
+            @RequestParam(required = false) BigDecimal minPrice,
+            @RequestParam(required = false) BigDecimal maxPrice,
+            @RequestParam(required = false) List<String> amenities,
+            @RequestParam(required = false) com.secure.apnastaybackend.entity.FurnishingType furnishing,
+            @RequestParam(required = false) Double minLatitude,
+            @RequestParam(required = false) Double maxLatitude,
+            @RequestParam(required = false) Double minLongitude,
+            @RequestParam(required = false) Double maxLongitude,
+            @RequestParam(defaultValue = "newest") String sortBy,
+            @RequestParam(defaultValue = "desc") String sortDir,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PagedResponse<PropertyPublicDTO> result = propertyService.searchPublicProperties(
+                city, pinCode, minBedrooms, minBathrooms, minPrice, maxPrice, amenities, furnishing,
+                minLatitude, maxLatitude, minLongitude, maxLongitude, sortBy, sortDir, page, size
+        );
+        return ResponseEntity.ok(ApiResponse.success("Public property search completed", result));
+    }
+
+    @GetMapping("/public/{propertyId}/similar")
+    public ResponseEntity<ApiResponse<List<PropertyPublicDTO>>> getSimilarProperties(
+            @PathVariable Long propertyId,
+            @RequestParam(defaultValue = "6") int limit) {
+        List<PropertyPublicDTO> properties = propertyService.getSimilarPublicProperties(propertyId, limit);
+        return ResponseEntity.ok(ApiResponse.success("Similar properties retrieved", properties));
     }
 
     @GetMapping("/{propertyId}")

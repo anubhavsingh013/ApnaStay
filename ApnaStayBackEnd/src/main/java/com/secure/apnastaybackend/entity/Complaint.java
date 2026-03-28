@@ -62,6 +62,21 @@ public class Complaint {
     @Column(name = "resolution_note", columnDefinition = "TEXT")
     private String resolutionNote;
 
+    @Column(name = "category", length = 50)
+    private String category;
+
+    @Column(name = "first_response_at")
+    private LocalDateTime firstResponseAt;
+
+    @Column(name = "response_due_at")
+    private LocalDateTime responseDueAt;
+
+    @Column(name = "resolution_due_at")
+    private LocalDateTime resolutionDueAt;
+
+    @Column(name = "csat_score")
+    private Integer csatScore;
+
     @OneToMany(mappedBy = "complaint", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("createdAt ASC")
     private List<ComplaintMessage> messages = new ArrayList<>();

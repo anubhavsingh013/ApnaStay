@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
           target: apiBase,
           changeOrigin: true,
         },
-        /** STOMP/SockJS complaint chat — same origin in dev, forwarded to Spring on :8080 */
+        /** STOMP/SockJS fallback when `VITE_API_BASE_URL` is unset (client uses `VITE_API_BASE_URL/chat` first) */
         "/chat": {
           target: apiBase,
           ws: true,

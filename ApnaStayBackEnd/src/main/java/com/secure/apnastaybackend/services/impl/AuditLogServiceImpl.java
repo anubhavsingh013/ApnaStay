@@ -57,5 +57,16 @@ public class AuditLogServiceImpl implements AuditLogService {
     public List<AuditLog> getAuditLogsForPropertyId(Long id) {
         return auditLogRepository.findByPropertyId(id);
     }
+
+    @Override
+    public void logAction(String action, String username, Long propertyId, String content) {
+        AuditLog log = new AuditLog();
+        log.setAction(action);
+        log.setUsername(username);
+        log.setPropertyId(propertyId);
+        log.setPropertyContent(content);
+        log.setTimestamp(LocalDateTime.now());
+        auditLogRepository.save(log);
+    }
 }
 

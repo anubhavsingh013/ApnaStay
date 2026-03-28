@@ -1,6 +1,7 @@
 package com.secure.apnastaybackend.services;
 
 import com.secure.apnastaybackend.dto.request.PropertyRequest;
+import com.secure.apnastaybackend.dto.response.PagedResponse;
 import com.secure.apnastaybackend.dto.response.PropertyDTO;
 import com.secure.apnastaybackend.dto.response.PropertyPublicDTO;
 import com.secure.apnastaybackend.entity.PropertyImageFile;
@@ -53,5 +54,28 @@ public interface PropertyService {
 
     /** Public: list all AVAILABLE and featured properties with minimal, non-confidential fields. */
     List<PropertyPublicDTO> getPublicFeaturedPropertyListings();
+
+    /** Public: searchable property listings for modern discovery UX. */
+    PagedResponse<PropertyPublicDTO> searchPublicProperties(
+            String city,
+            String pinCode,
+            Integer minBedrooms,
+            Integer minBathrooms,
+            java.math.BigDecimal minPrice,
+            java.math.BigDecimal maxPrice,
+            java.util.List<String> amenities,
+            com.secure.apnastaybackend.entity.FurnishingType furnishing,
+            Double minLatitude,
+            Double maxLatitude,
+            Double minLongitude,
+            Double maxLongitude,
+            String sortBy,
+            String sortDir,
+            int page,
+            int size
+    );
+
+    /** Public: lightweight similar listing recommendations for a property. */
+    java.util.List<PropertyPublicDTO> getSimilarPublicProperties(Long propertyId, int limit);
 }
 

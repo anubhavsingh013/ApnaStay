@@ -19,6 +19,8 @@ import Signup from "./pages/Signup";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import PropertyDetail from "./pages/PropertyDetail";
+import DashboardPropertyDetail from "./pages/DashboardPropertyDetail";
+import RentedPropertyDetail from "./pages/RentedPropertyDetail";
 import HelpCenter from "./pages/HelpCenter";
 import PrivacyPolicy from "./pages/PrivacyPolicy";
 import TermsOfService from "./pages/TermsOfService";
@@ -40,7 +42,9 @@ const App = () => (
               <Route path="/" element={<Index />} />
               <Route path="/properties" element={<Properties />} />
               <Route path="/property/:id" element={<PropertyDetail />} />
+              <Route path="/dashboard/rented/:leaseId" element={<ProtectedRoute><RentedPropertyDetail /></ProtectedRoute>} />
               <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+              <Route path="/dashboard/property/:propertyId" element={<ProtectedRoute><DashboardPropertyDetail /></ProtectedRoute>} />
               <Route path="/owner/dashboard" element={<ProtectedRoute><OwnerDashboard /></ProtectedRoute>} />
               <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
               <Route path="/broker/dashboard" element={<ProtectedRoute><BrokerDashboard /></ProtectedRoute>} />

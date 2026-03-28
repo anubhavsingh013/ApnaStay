@@ -16,5 +16,7 @@ public interface AuditLogService {
 
     List<AuditLog> getAuditLogsForPropertyId(Long id);
 
+    void logAction(String action, String username, Long propertyId, String content);
+
 }
 

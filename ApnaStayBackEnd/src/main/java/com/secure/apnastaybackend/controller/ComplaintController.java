@@ -21,6 +21,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/complaints")
@@ -139,6 +140,22 @@ public class ComplaintController {
         String username = userDetails.getUsername();
         complaintService.markThreadRead(username, id, request.getLastReadMessageId());
         return ResponseEntity.ok(ApiResponse.success("Read position updated", "ok"));
+    }
+
+    @PutMapping("/{id}/csat")
+    public ResponseEntity<ApiResponse<ComplaintDTO>> submitCsat(
+            @PathVariable Long id,
+            @RequestParam Integer score,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        ComplaintDTO dto = complaintService.submitCsat(userDetails.getUsername(), id, score);
+        return ResponseEntity.ok(ApiResponse.success("CSAT submitted", dto));
+    }
+
+    @PostMapping("/admin/sla-cycle")
+    public ResponseEntity<ApiResponse<Map<String, Integer>>> runSlaCycle(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        int flagged = complaintService.runSlaEscalationCycle();
+        return ResponseEntity.ok(ApiResponse.success("SLA cycle completed", Map.of("flaggedComplaints", flagged)));
     }
 }
 
