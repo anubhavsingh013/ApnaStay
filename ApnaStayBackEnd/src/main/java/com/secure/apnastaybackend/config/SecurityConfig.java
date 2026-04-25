@@ -78,6 +78,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/health-check/**").permitAll()
                 .requestMatchers("/api/property/public/**").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/property/image-file/**").permitAll()
+                .requestMatchers(HttpMethod.GET, "/api/profile/photo/**").permitAll()
                 .anyRequest().authenticated());
 
         http.exceptionHandling(exception -> exception.authenticationEntryPoint(unauthorizedHandler));

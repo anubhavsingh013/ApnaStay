@@ -4,7 +4,10 @@ import com.secure.apnastaybackend.dto.request.ProfileRequest;
 import com.secure.apnastaybackend.dto.response.ApprovalStatusResponse;
 import com.secure.apnastaybackend.dto.response.ProfileDTO;
 import com.secure.apnastaybackend.dto.response.ProfileListItemDTO;
+import com.secure.apnastaybackend.dto.response.ProfilePhotoResponse;
 import com.secure.apnastaybackend.entity.AppRole;
+import com.secure.apnastaybackend.entity.UserProfilePicture;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 
@@ -24,12 +27,18 @@ public interface ProfileService {
 
     ProfileDTO getProfileByRoleAndId(AppRole role, Long id);
 
-    void approveProfile(AppRole role, Long id, String adminNote);
+    void approveProfile(AppRole role, Long id, String adminNote, String adminUsername);
 
-    void rejectProfile(AppRole role, Long id, String adminNote);
+    void rejectProfile(AppRole role, Long id, String adminNote, String adminUsername);
 
     boolean isProfileApproved(String userName, AppRole profileRole);
 
     ApprovalStatusResponse getApprovalStatus(String userName, AppRole profileRole);
+
+    ProfilePhotoResponse uploadProfilePhoto(String userName, MultipartFile file);
+
+    void deleteProfilePhoto(String userName);
+
+    UserProfilePicture getProfilePhotoForDownload(Long userId);
 }
 

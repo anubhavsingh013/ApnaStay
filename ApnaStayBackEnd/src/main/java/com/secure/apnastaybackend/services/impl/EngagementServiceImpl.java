@@ -15,6 +15,7 @@ import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.SavedPropertyRepository;
 import com.secure.apnastaybackend.repositories.SavedSearchRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.EngagementService;
 import com.secure.apnastaybackend.services.PropertyService;
 import com.secure.apnastaybackend.utils.EmailService;
@@ -36,6 +37,7 @@ public class EngagementServiceImpl implements EngagementService {
     private final PropertyRepository propertyRepository;
     private final PropertyService propertyService;
     private final EmailService emailService;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional
@@ -52,7 +54,10 @@ public class EngagementServiceImpl implements EngagementService {
         SavedProperty saved = new SavedProperty();
         saved.setUser(user);
         saved.setProperty(property);
-        return toSavedPropertyDTO(savedPropertyRepository.save(saved));
+        SavedProperty persisted = savedPropertyRepository.save(saved);
+        auditLogService.logAction("ENGAGEMENT_PROPERTY_SAVE", userName, propertyId,
+                "savedPropertyId=" + persisted.getId());
+        return toSavedPropertyDTO(persisted);
     }
 
     @Override
@@ -70,6 +75,8 @@ public class EngagementServiceImpl implements EngagementService {
         User user = getUser(userName);
         SavedProperty saved = savedPropertyRepository.findByUser_UserIdAndProperty_Id(user.getUserId(), propertyId)
                 .orElseThrow(() -> new ResourceNotFoundException("SavedProperty", "propertyId", propertyId));
+        auditLogService.logAction("ENGAGEMENT_PROPERTY_REMOVE", userName, propertyId,
+                "savedPropertyId=" + saved.getId());
         savedPropertyRepository.delete(saved);
     }
 
@@ -80,7 +87,10 @@ public class EngagementServiceImpl implements EngagementService {
         SavedSearch search = new SavedSearch();
         search.setUser(user);
         applyRequest(search, request);
-        return toSavedSearchDTO(savedSearchRepository.save(search));
+        SavedSearch persisted = savedSearchRepository.save(search);
+        auditLogService.logAction("ENGAGEMENT_SAVED_SEARCH_CREATE", userName, null,
+                "savedSearchId=" + persisted.getId() + " name=" + persisted.getName());
+        return toSavedSearchDTO(persisted);
     }
 
     @Override
@@ -102,7 +112,10 @@ public class EngagementServiceImpl implements EngagementService {
             throw new BadRequestException("You do not have access to this saved search");
         }
         applyRequest(savedSearch, request);
-        return toSavedSearchDTO(savedSearchRepository.save(savedSearch));
+        SavedSearch persisted = savedSearchRepository.save(savedSearch);
+        auditLogService.logAction("ENGAGEMENT_SAVED_SEARCH_UPDATE", userName, null,
+                "savedSearchId=" + searchId);
+        return toSavedSearchDTO(persisted);
     }
 
     @Override
@@ -114,6 +127,8 @@ public class EngagementServiceImpl implements EngagementService {
         if (!savedSearch.getUser().getUserId().equals(user.getUserId())) {
             throw new BadRequestException("You do not have access to this saved search");
         }
+        auditLogService.logAction("ENGAGEMENT_SAVED_SEARCH_DELETE", userName, null,
+                "savedSearchId=" + searchId);
         savedSearchRepository.delete(savedSearch);
     }
 

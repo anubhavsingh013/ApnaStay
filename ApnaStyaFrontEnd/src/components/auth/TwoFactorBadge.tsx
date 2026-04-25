@@ -11,7 +11,7 @@ interface TwoFactorBadgeProps {
 
 /** Same pill shell as VerificationBadge (h-7, px-2.5) so they align side-by-side */
 const pillClass =
-  "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium leading-none";
+  "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium leading-none w-max max-w-full";
 
 /** Badge showing 2FA status in the same style as VerificationBadge (CheckCircle when enabled). */
 export function TwoFactorBadge({ enabled, className = "", showIcon = true, onEnableClick }: TwoFactorBadgeProps) {

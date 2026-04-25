@@ -5,17 +5,21 @@ import com.secure.apnastaybackend.dto.request.ProfileRequest;
 import com.secure.apnastaybackend.dto.response.ApiResponse;
 import com.secure.apnastaybackend.dto.response.ApprovalStatusResponse;
 import com.secure.apnastaybackend.dto.response.ProfileDTO;
+import com.secure.apnastaybackend.dto.response.ProfilePhotoResponse;
 import com.secure.apnastaybackend.entity.AppRole;
 import com.secure.apnastaybackend.exceptions.BadRequestException;
 import com.secure.apnastaybackend.services.ProfileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Arrays;
 import java.util.List;
@@ -98,6 +102,37 @@ public class ProfileController {
         );
     }
 
+    @PostMapping(value = "/photo", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<ProfilePhotoResponse>> uploadProfilePhoto(
+            @RequestPart("file") MultipartFile file,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        ProfilePhotoResponse body = profileService.uploadProfilePhoto(userDetails.getUsername(), file);
+        return ResponseEntity.ok(ApiResponse.success("Profile photo updated", body));
+    }
+
+    @DeleteMapping("/photo")
+    public ResponseEntity<ApiResponse<Void>> deleteProfilePhoto(@AuthenticationPrincipal UserDetails userDetails) {
+        profileService.deleteProfilePhoto(userDetails.getUsername());
+        return ResponseEntity.ok(ApiResponse.success("Profile photo removed"));
+    }
+
+    @GetMapping("/photo/{userId}")
+    public ResponseEntity<byte[]> getProfilePhoto(@PathVariable Long userId) {
+        var pic = profileService.getProfilePhotoForDownload(userId);
+        MediaType mt = MediaType.APPLICATION_OCTET_STREAM;
+        try {
+            if (pic.getContentType() != null && !pic.getContentType().isBlank()) {
+                mt = MediaType.parseMediaType(pic.getContentType());
+            }
+        } catch (Exception ignored) {
+            mt = MediaType.IMAGE_JPEG;
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "public, max-age=300")
+                .contentType(mt)
+                .body(pic.getData());
+    }
+
     @PutMapping
     public ResponseEntity<ApiResponse<ProfileDTO>> updateProfile(
             @RequestBody(required = false) ProfileRequest request,
@@ -137,7 +172,7 @@ public class ProfileController {
             @AuthenticationPrincipal UserDetails userDetails) {
         validateAdmin(userDetails);
         String adminNote = body != null ? body.getAdminNote() : null;
-        profileService.approveProfile(role, id, adminNote);
+        profileService.approveProfile(role, id, adminNote, userDetails.getUsername());
         return ResponseEntity.ok(
                 ApiResponse.success("Profile approved successfully")
         );
@@ -151,7 +186,7 @@ public class ProfileController {
             @AuthenticationPrincipal UserDetails userDetails) {
         validateAdmin(userDetails);
         String adminNote = body != null ? body.getAdminNote() : null;
-        profileService.rejectProfile(role, id, adminNote);
+        profileService.rejectProfile(role, id, adminNote, userDetails.getUsername());
         return ResponseEntity.ok(
                 ApiResponse.success("Profile rejected successfully")
         );

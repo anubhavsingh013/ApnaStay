@@ -8,6 +8,19 @@ export const profileTextFieldSx: SxProps<Theme> = {
     minHeight: 40,
     borderRadius: 1,
     bgcolor: (t) => (t.palette.mode === "dark" ? "grey.900" : "#fff"),
+    boxShadow: "none",
+    "& .MuiOutlinedInput-input": {
+      outline: "none",
+    },
+    "&.Mui-focused": {
+      boxShadow: "none",
+    },
+    "& .MuiOutlinedInput-notchedOutline": {
+      borderWidth: "1px",
+    },
+    "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
+      borderWidth: "2px",
+    },
   },
   "& .MuiInputLabel-root": { fontSize: "0.75rem" },
 };

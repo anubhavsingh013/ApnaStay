@@ -16,6 +16,7 @@ import com.secure.apnastaybackend.exceptions.UnauthorizedException;
 import com.secure.apnastaybackend.repositories.PropertyImageFileRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.ProfileService;
 import com.secure.apnastaybackend.services.PropertyImageUploadValidator;
 import com.secure.apnastaybackend.services.PropertyService;
@@ -53,6 +54,9 @@ public class PropertyServiceImpl implements PropertyService {
 
     @Autowired
     private PropertyImageUploadValidator propertyImageUploadValidator;
+
+    @Autowired
+    private AuditLogService auditLogService;
 
     @Value("${app.public-base-url:}")
     private String publicBaseUrl;
@@ -493,6 +497,13 @@ public class PropertyServiceImpl implements PropertyService {
         property.setStatus(status);
         Property saved = propertyRepository.save(property);
         log.info("Property {} status updated to {} by admin {}", propertyId, status, userName);
+        String action = switch (status) {
+            case AVAILABLE -> "PROPERTY_PUBLISH";
+            case REJECTED -> "PROPERTY_REJECT";
+            default -> "PROPERTY_STATUS_" + status.name();
+        };
+        auditLogService.logAction(action, userName, propertyId,
+                saved.getTitle() != null ? saved.getTitle() : "propertyId=" + propertyId + " status=" + status);
         return convertToDTO(saved);
     }
 

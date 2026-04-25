@@ -47,5 +47,8 @@ public class ProfileDTO {
     private LocalDateTime createdAt;
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime updatedAt;
+
+    /** Absolute or relative URL to GET profile photo; null if the user has not uploaded one. */
+    private String profilePictureUrl;
 }
 

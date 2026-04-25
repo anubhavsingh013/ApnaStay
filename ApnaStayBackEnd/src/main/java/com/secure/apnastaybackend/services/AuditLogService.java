@@ -16,6 +16,10 @@ public interface AuditLogService {
 
     List<AuditLog> getAuditLogsForPropertyId(Long id);
 
+    /**
+     * General-purpose audit row. {@code propertyId} may be null for non-property events;
+     * put entity ids and context in {@code content} (keep PII minimal).
+     */
     void logAction(String action, String username, Long propertyId, String content);
 
 }

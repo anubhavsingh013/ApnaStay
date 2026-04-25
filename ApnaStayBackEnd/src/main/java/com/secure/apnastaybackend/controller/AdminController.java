@@ -6,11 +6,14 @@ import com.secure.apnastaybackend.dto.response.ProfileListItemDTO;
 import com.secure.apnastaybackend.dto.response.UserDTO;
 import com.secure.apnastaybackend.entity.AppRole;
 import com.secure.apnastaybackend.entity.Role;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.ProfileService;
 import com.secure.apnastaybackend.services.UserService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,6 +29,9 @@ public class AdminController {
     @Autowired
     ProfileService profileService;
 
+    @Autowired
+    AuditLogService auditLogService;
+
     @GetMapping("/getusers")
     public ResponseEntity<ApiResponse<List<UserDTO>>> getAllUsers() {
         List<UserDTO> users = userService.getAllUserDtos();
@@ -36,9 +42,12 @@ public class AdminController {
     @PutMapping("/update-role")
     public ResponseEntity<ApiResponse<Void>> updateUserRole(
             @RequestParam Long userId,
-            @RequestParam String roleName) {
+            @RequestParam String roleName,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updateUserRole(userId, roleName);
+        auditLogService.logAction("ADMIN_USER_ROLE_UPDATE", actor(userDetails), null,
+                "targetUserId=" + userId + " newRole=" + roleName);
         return ResponseEntity.ok(
             ApiResponse.success("User role updated successfully")
         );
@@ -54,9 +63,12 @@ public class AdminController {
     @PutMapping("/update-lock-status")
     public ResponseEntity<ApiResponse<Void>> updateAccountLockStatus(
             @RequestParam Long userId, 
-            @RequestParam boolean lock) {
+            @RequestParam boolean lock,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updateAccountLockStatus(userId, lock);
+        auditLogService.logAction(lock ? "ADMIN_USER_LOCK" : "ADMIN_USER_UNLOCK", actor(userDetails), null,
+                "targetUserId=" + userId);
         return ResponseEntity.ok(
             ApiResponse.success("Account lock status updated successfully")
         );
@@ -72,9 +84,12 @@ public class AdminController {
     @PutMapping("/update-expiry-status")
     public ResponseEntity<ApiResponse<Void>> updateAccountExpiryStatus(
             @RequestParam Long userId, 
-            @RequestParam boolean expire) {
+            @RequestParam boolean expire,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updateAccountExpiryStatus(userId, expire);
+        auditLogService.logAction(expire ? "ADMIN_USER_ACCOUNT_EXPIRE" : "ADMIN_USER_ACCOUNT_EXTEND", actor(userDetails), null,
+                "targetUserId=" + userId);
         return ResponseEntity.ok(
             ApiResponse.success("Account expiry status updated successfully")
         );
@@ -83,9 +98,12 @@ public class AdminController {
     @PutMapping("/update-enabled-status")
     public ResponseEntity<ApiResponse<Void>> updateAccountEnabledStatus(
             @RequestParam Long userId, 
-            @RequestParam boolean enabled) {
+            @RequestParam boolean enabled,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updateAccountEnabledStatus(userId, enabled);
+        auditLogService.logAction(enabled ? "ADMIN_USER_ENABLE" : "ADMIN_USER_DISABLE", actor(userDetails), null,
+                "targetUserId=" + userId);
         return ResponseEntity.ok(
             ApiResponse.success("Account enabled status updated successfully")
         );
@@ -94,9 +112,12 @@ public class AdminController {
     @PutMapping("/update-credentials-expiry-status")
     public ResponseEntity<ApiResponse<Void>> updateCredentialsExpiryStatus(
             @RequestParam Long userId, 
-            @RequestParam boolean expire) {
+            @RequestParam boolean expire,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updateCredentialsExpiryStatus(userId, expire);
+        auditLogService.logAction(expire ? "ADMIN_USER_CREDENTIALS_EXPIRE" : "ADMIN_USER_CREDENTIALS_EXTEND", actor(userDetails), null,
+                "targetUserId=" + userId);
         return ResponseEntity.ok(
             ApiResponse.success("Credentials expiry status updated successfully")
         );
@@ -105,9 +126,12 @@ public class AdminController {
     @PutMapping("/update-password")
     public ResponseEntity<ApiResponse<Void>> updatePassword(
             @RequestParam Long userId, 
-            @RequestParam String password) {
+            @RequestParam String password,
+            @AuthenticationPrincipal UserDetails userDetails) {
         
         userService.updatePassword(userId, password);
+        auditLogService.logAction("ADMIN_USER_PASSWORD_RESET", actor(userDetails), null,
+                "targetUserId=" + userId);
         return ResponseEntity.ok(
             ApiResponse.success("Password updated successfully")
         );
@@ -137,8 +161,9 @@ public class AdminController {
     public ResponseEntity<ApiResponse<Void>> approveProfile(
             @PathVariable AppRole role,
             @PathVariable Long id,
-            @RequestParam(required = false) String adminNote) {
-        profileService.approveProfile(role, id, adminNote);
+            @RequestParam(required = false) String adminNote,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        profileService.approveProfile(role, id, adminNote, actor(userDetails));
         return ResponseEntity.ok(
             ApiResponse.success("Profile approved successfully")
         );
@@ -148,11 +173,16 @@ public class AdminController {
     public ResponseEntity<ApiResponse<Void>> rejectProfile(
             @PathVariable AppRole role,
             @PathVariable Long id,
-            @RequestParam(required = false) String adminNote) {
-        profileService.rejectProfile(role, id, adminNote);
+            @RequestParam(required = false) String adminNote,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        profileService.rejectProfile(role, id, adminNote, actor(userDetails));
         return ResponseEntity.ok(
             ApiResponse.success("Profile rejected successfully")
         );
+    }
+
+    private static String actor(UserDetails userDetails) {
+        return userDetails != null && userDetails.getUsername() != null ? userDetails.getUsername() : "unknown";
     }
 }
 

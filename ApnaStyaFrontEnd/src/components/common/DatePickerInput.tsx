@@ -78,10 +78,13 @@ export function DatePickerInput({
               minHeight: 40,
               borderRadius: 1,
               color: "#0f172a",
+              boxShadow: "none",
+              "&.Mui-focused": { boxShadow: "none" },
+              "& .MuiOutlinedInput-notchedOutline": { borderWidth: "1px", borderColor: "#cbd5e1" },
+              "&.Mui-focused .MuiOutlinedInput-notchedOutline": { borderWidth: "2px" },
             },
-            "& .MuiOutlinedInput-input": { color: "#0f172a", cursor: "pointer" },
+            "& .MuiOutlinedInput-input": { color: "#0f172a", cursor: "pointer", outline: "none" },
             "& .MuiInputLabel-root": { color: "#64748b", fontSize: "0.75rem" },
-            "& .MuiOutlinedInput-notchedOutline": { borderColor: "#cbd5e1" },
           }}
         />
       </ThemeProvider>

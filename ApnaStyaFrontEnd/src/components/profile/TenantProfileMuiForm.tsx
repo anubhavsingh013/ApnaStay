@@ -66,7 +66,7 @@ export function TenantProfileMuiForm({ form, setForm }: Props) {
           </Box>
           <TextField
             required
-            label="Aadhar / ID number"
+            label="Aadhar number"
             value={form.aadharNumber || form.idNumber}
             onChange={(e) => {
               const d = e.target.value.replace(/\D/g, "").slice(0, 12);

@@ -15,6 +15,7 @@ import com.secure.apnastaybackend.repositories.ComplaintRepository;
 import com.secure.apnastaybackend.repositories.ComplaintThreadReadRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.ComplaintService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +40,7 @@ public class ComplaintServiceImpl implements ComplaintService {
     private final UserRepository userRepository;
     private final PropertyRepository propertyRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final AuditLogService auditLogService;
 
     private static String topicForComplaint(long complaintId) {
         return "/topic/complaint/" + complaintId;
@@ -90,6 +92,12 @@ public class ComplaintServiceImpl implements ComplaintService {
         complaint.setResolutionDueAt(LocalDateTime.now().plusDays(2));
         Complaint saved = complaintRepository.save(complaint);
         log.info("Complaint raised: id={} by {}", saved.getId(), userName);
+        Long propId = saved.getProperty() != null ? saved.getProperty().getId() : null;
+        String subj = saved.getSubject() != null && saved.getSubject().length() > 120
+                ? saved.getSubject().substring(0, 117) + "..."
+                : saved.getSubject();
+        auditLogService.logAction("COMPLAINT_CREATE", userName, propId,
+                "complaintId=" + saved.getId() + (subj != null ? " subject=" + subj : ""));
         return toComplaintDTO(saved);
     }
 
@@ -147,6 +155,8 @@ public class ComplaintServiceImpl implements ComplaintService {
         complaint.setResolutionNote(request != null ? request.getResolutionNote() : null);
         Complaint saved = complaintRepository.save(complaint);
         log.info("Complaint resolved: id={} by {}", id, userName);
+        Long propId = saved.getProperty() != null ? saved.getProperty().getId() : null;
+        auditLogService.logAction("COMPLAINT_RESOLVE", userName, propId, "complaintId=" + id);
         return toComplaintDTO(saved);
     }
 
@@ -172,6 +182,9 @@ public class ComplaintServiceImpl implements ComplaintService {
         }
         Complaint saved = complaintRepository.save(complaint);
         log.info("Complaint {} assigned to user {}", id, assignTo.getUserName());
+        Long propId = saved.getProperty() != null ? saved.getProperty().getId() : null;
+        auditLogService.logAction("COMPLAINT_ASSIGN", userName, propId,
+                "complaintId=" + id + " assignTo=" + assignTo.getUserName());
         return toComplaintDTO(saved);
     }
 
@@ -193,6 +206,8 @@ public class ComplaintServiceImpl implements ComplaintService {
             complaint.setResolvedBy(user);
         }
         Complaint saved = complaintRepository.save(complaint);
+        Long propId = saved.getProperty() != null ? saved.getProperty().getId() : null;
+        auditLogService.logAction("COMPLAINT_STATUS_" + status.name(), userName, propId, "complaintId=" + id);
         return toComplaintDTO(saved);
     }
 
@@ -286,6 +301,9 @@ public class ComplaintServiceImpl implements ComplaintService {
             messagingTemplate.convertAndSend(topicForUser(uid), (Object) envelope);
         }
         log.info("Complaint message {} soft-deleted on complaint {} by {}", messageId, complaintId, userName);
+        Long propId = complaint.getProperty() != null ? complaint.getProperty().getId() : null;
+        auditLogService.logAction("COMPLAINT_MESSAGE_DELETE", userName, propId,
+                "complaintId=" + complaintId + " messageId=" + messageId);
         return toMessageDTO(msg);
     }
 
@@ -369,7 +387,10 @@ public class ComplaintServiceImpl implements ComplaintService {
             throw new BadRequestException("Only complaint raiser can submit CSAT");
         }
         complaint.setCsatScore(score);
-        return toComplaintDTO(complaintRepository.save(complaint));
+        Complaint saved = complaintRepository.save(complaint);
+        Long propId = saved.getProperty() != null ? saved.getProperty().getId() : null;
+        auditLogService.logAction("COMPLAINT_CSAT", userName, propId, "complaintId=" + complaintId + " score=" + score);
+        return toComplaintDTO(saved);
     }
 
     @Override

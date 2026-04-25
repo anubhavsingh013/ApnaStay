@@ -93,7 +93,7 @@ const ResetPassword = () => {
                     <Input
                       type={showPassword ? "text" : "password"}
                       placeholder="••••••••"
-                      className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20"
+                      className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       required
@@ -116,7 +116,7 @@ const ResetPassword = () => {
                     <Input
                       type={showConfirm ? "text" : "password"}
                       placeholder="••••••••"
-                      className={`pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 ${
+                      className={`pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 ${
                         passwordsMatch ? "border-primary/50" : passwordsMismatch ? "border-destructive/50" : ""
                       }`}
                       value={confirmPassword}

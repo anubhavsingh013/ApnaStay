@@ -864,6 +864,8 @@ export interface ProfileDTO {
   id: number;
   userId: number;
   userName: string;
+  /** Present when the account has an uploaded profile picture (absolute or relative URL). */
+  profilePictureUrl?: string | null;
   profileRole: string;
   fullName: string;
   gender: string;
@@ -935,11 +937,62 @@ export interface ProfileUpdateRequest {
   policeStation?: string | null;
 }
 
+/** Resolve a path or absolute URL from the API for use in <img src>. */
+export function resolveApiMediaUrl(pathOrUrl: string): string {
+  const p = pathOrUrl.trim();
+  if (/^https?:\/\//i.test(p)) return p;
+  const base = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+  if (!base) return p.startsWith("/") ? p : `/${p}`;
+  return `${base}${p.startsWith("/") ? p : `/${p}`}`;
+}
+
 /** GET /api/profile — pass role as query param */
 export async function getProfile(role: ProfileRole) {
   return apiRequest<{ success: boolean; data: ProfileDTO; message?: string; timestamp?: string }>(
     `/api/profile?role=${encodeURIComponent(role)}`
   );
+}
+
+/** POST /api/profile/photo — multipart field name {@code file}. */
+export async function uploadProfilePhoto(file: File) {
+  const jwt = getJwt();
+  const form = new FormData();
+  form.append("file", file);
+  const headers: Record<string, string> = {};
+  if (jwt) headers["Authorization"] = `Bearer ${jwt}`;
+  const token = await getCsrf();
+  if (token) headers[csrfHeaderName] = token;
+  const res = await fetch(`${BASE_URL}/api/profile/photo`, {
+    method: "POST",
+    body: form,
+    headers,
+    credentials: "include",
+  });
+  const text = await res.text();
+  const data = (text && text.trim().length > 0
+    ? (() => {
+        try {
+          return JSON.parse(text) as BackendErrorResponse & {
+            data?: { userId: number; profilePictureUrl: string };
+          };
+        } catch {
+          return {} as BackendErrorResponse;
+        }
+      })()
+    : {}) as BackendErrorResponse & { data?: { userId: number; profilePictureUrl: string } };
+  if (!res.ok) {
+    if (res.status === 401 && jwt) {
+      logout();
+      if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("apnastay:auth:401"));
+    }
+    throw new Error(getApiErrorMessage(data as BackendErrorResponse, `Request failed (${res.status})`));
+  }
+  return data as { success: boolean; data: { userId: number; profilePictureUrl: string }; message?: string };
+}
+
+/** DELETE /api/profile/photo — remove current user's profile picture. */
+export async function deleteProfilePhoto() {
+  return apiRequest<{ success: boolean; message?: string }>("/api/profile/photo", { method: "DELETE" });
 }
 
 /** POST /api/profile/review — submit profile for admin review (role in request body) */

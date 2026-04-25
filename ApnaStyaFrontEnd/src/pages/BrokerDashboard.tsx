@@ -6,13 +6,14 @@ import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
 import { useDemoData, type BrokerProfile } from "@/features/demo/DemoDataContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastSuccess, toastError } from "@/lib/app-toast";
-import { getProfile, get2faStatus, submitProfileForReview, updateProfile, getDecodedToken, type ProfileDTO } from "@/lib/api";
+import { getProfile, get2faStatus, submitProfileForReview, updateProfile, getDecodedToken, resolveApiMediaUrl, type ProfileDTO } from "@/lib/api";
 import { VerificationBadge, type VerificationStatus } from "@/components/auth/VerificationBadge";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
 import { parseMobileValue, formatMobileForApi } from "@/components/auth/MobileInput";
 import { indianStates, isPincodeValidForState } from "@/constants/indianStates";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { BrokerProfileMuiForm } from "@/components/profile/BrokerProfileMuiForm";
+import { ProfilePhotoSection } from "@/components/profile/ProfilePhotoSection";
 import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
 import type { BrokerProfileFormFields } from "@/components/profile/BrokerProfileMuiForm";
 import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
@@ -30,6 +31,7 @@ import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
 import { formatDob } from "@/lib/utils";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
+import { DashboardNavShell } from "@/components/dashboard/DashboardNavShell";
 
 const DEMO_BROKER = "amit_broker";
 
@@ -198,6 +200,19 @@ const BrokerDashboard = () => {
         }
       })
       .finally(() => setProfileLoading(false));
+  };
+
+  const reloadProfileDataOnly = () => {
+    if (!useRealApi) return;
+    getProfile("ROLE_BROKER")
+      .then((res) => {
+        const data = (res as { data?: ProfileDTO }).data;
+        if (data && typeof data.id === "number") {
+          setApiProfile(data);
+          setApiApproved(data.status === "APPROVED");
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -503,43 +518,37 @@ const BrokerDashboard = () => {
           </div>
         </div>
 
-        {/* Mobile horizontal tabs */}
-        <div className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
-          {tabs.map((t) => (
-            <button key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-violet-500/40 bg-violet-50 dark:bg-violet-900/20 text-violet-700 dark:text-violet-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
-              <t.icon className="h-3.5 w-3.5" />{t.label}
-              {t.id === "notifications" && unreadCount > 0 && <span className="bg-destructive text-destructive-foreground text-[10px] rounded-full px-1.5 font-medium">{unreadCount}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-6">
-          <aside className="hidden md:block w-56 shrink-0">
-            <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 sticky top-20 shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 ring-1 ring-slate-100 dark:ring-slate-800/80 border-l-4 border-l-violet-500/80 dark:border-l-violet-400/60">
-              <div className="flex items-center gap-3 pb-3 border-b border-slate-200/80 dark:border-slate-700/80 mb-3">
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-violet-500/20 to-violet-600/10 dark:from-violet-400/25 dark:to-violet-500/15 flex items-center justify-center ring-2 ring-violet-400/20 dark:ring-violet-500/30 shrink-0"><Briefcase className="h-5 w-5 text-violet-600 dark:text-violet-400" /></div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{currentBroker}</p>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-violet-500/15 dark:bg-violet-400/20 text-violet-700 dark:text-violet-300 text-xs font-semibold tracking-wide">Broker</span>
-                    <VerificationBadge status={verificationStatus} showIcon className="text-[10px]" approvedAsActiveStyle onVerifyClick={(useRealApi || demoMode) ? () => setVerifySubmitDialogOpen(true) : undefined} />
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                {tabs.map((t) => (
-                  <button key={t.id} onClick={() => setActiveTab(t.id)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-violet-300 dark:border-violet-600/60 bg-violet-50/80 dark:bg-violet-900/30 text-violet-800 dark:text-violet-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
-                    <t.icon className="h-4 w-4 shrink-0" />{t.label}
-                    {t.id === "notifications" && unreadCount > 0 && <span className="ml-auto bg-destructive text-destructive-foreground text-xs rounded-full px-1.5 py-0.5 font-medium">{unreadCount}</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
-
-          <div className="flex-1 min-w-0 space-y-4">
+        <DashboardNavShell
+          accent="violet"
+          tabs={tabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          user={{
+            displayName: decodedToken?.sub ?? (useRealApi && apiProfile?.userName ? apiProfile.userName : currentBroker),
+            subtitle:
+              decodedToken?.email ??
+              (useRealApi && apiProfile?.email ? apiProfile.email : undefined) ??
+              (demoMode ? demoBrokerProfile?.email ?? `${currentBroker.replace(/_broker$/, "")}@gmail.com` : undefined),
+            roleLabel: "Broker",
+            avatarUrl:
+              useRealApi && apiProfile?.profilePictureUrl ? resolveApiMediaUrl(apiProfile.profilePictureUrl) : undefined,
+            fallbackIcon: Briefcase,
+            headerExtra: (
+              <VerificationBadge
+                status={verificationStatus}
+                showIcon
+                className="text-[10px]"
+                approvedAsActiveStyle
+                onVerifyClick={useRealApi || demoMode ? () => setVerifySubmitDialogOpen(true) : undefined}
+              />
+            ),
+          }}
+          renderTabBadge={(id) =>
+            id === "notifications" && unreadCount > 0 ? (
+              <span className="bg-destructive text-destructive-foreground text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{unreadCount}</span>
+            ) : null
+          }
+        >
             {/* Mobile action buttons */}
             <div className="flex gap-2 sm:hidden">
               <button type="button" onClick={() => setReferDialog(true)} className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-full border border-emerald-500/50 bg-transparent text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 px-3 py-1.5 text-xs font-medium transition-colors">
@@ -745,6 +754,16 @@ const BrokerDashboard = () => {
                     </div>
                   ) : (
                     <div className="space-y-8">
+                      <ProfilePhotoSection
+                        userId={decodedToken?.userId ?? apiProfile?.userId ?? null}
+                        profilePictureUrl={useRealApi ? apiProfile?.profilePictureUrl : null}
+                        displayName={useRealApi ? apiProfile?.fullName : demoBrokerProfile?.name}
+                        username={useRealApi ? apiProfile?.userName : currentBroker}
+                        demoMode={demoMode}
+                        onDemoAction={() => toastError("Demo mode", "Sign in with a real account to upload or change your profile photo.")}
+                        editable={useRealApi || demoMode}
+                        onMetaUpdated={reloadProfileDataOnly}
+                      />
                       <div>
                         <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                           <span className="w-1 h-4 rounded-full bg-violet-500/70" /> Account
@@ -893,8 +912,7 @@ const BrokerDashboard = () => {
                 </div>
               </div>
             )}
-          </div>
-        </div>
+        </DashboardNavShell>
       </div>
 
       <ProfileUpdateDialog

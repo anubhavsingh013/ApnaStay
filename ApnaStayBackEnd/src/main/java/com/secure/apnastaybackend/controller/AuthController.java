@@ -16,6 +16,7 @@ import com.secure.apnastaybackend.repositories.RoleRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
 import com.secure.apnastaybackend.security.jwt.JwtUtils;
 import com.secure.apnastaybackend.security.services.UserDetailsImpl;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.TotpService;
 import com.secure.apnastaybackend.services.PhoneAuthService;
 import com.secure.apnastaybackend.services.UserService;
@@ -69,6 +70,8 @@ public class AuthController {
 
     @Autowired
     TotpService totpService;
+    @Autowired
+    AuditLogService auditLogService;
 
     @PostMapping("/public/signin")
     public ResponseEntity<?> authenticateUser(@RequestBody LoginRequest loginRequest) {
@@ -179,6 +182,8 @@ public class AuthController {
         }
         user.setRole(role);
         userRepository.save(user);
+        auditLogService.logAction("AUTH_SIGNUP", user.getUserName(), null,
+                "role=" + role.getRoleName() + " userId=" + user.getUserId());
 
         // Return appropriate message based on signup method
         String identifier = (signUpRequest.getEmail() != null && !signUpRequest.getEmail().isEmpty()) ? 

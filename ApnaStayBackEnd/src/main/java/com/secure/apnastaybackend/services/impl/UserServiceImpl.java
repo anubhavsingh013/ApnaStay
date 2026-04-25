@@ -10,6 +10,7 @@ import com.secure.apnastaybackend.exceptions.ResourceNotFoundException;
 import com.secure.apnastaybackend.repositories.PasswordResetTokenRepository;
 import com.secure.apnastaybackend.repositories.RoleRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.TotpService;
 import com.secure.apnastaybackend.services.UserService;
 import com.secure.apnastaybackend.utils.EmailService;
@@ -49,6 +50,9 @@ public class UserServiceImpl implements UserService {
 
     @Autowired
     TotpService totpService;
+
+    @Autowired
+    AuditLogService auditLogService;
 
 
     @Override
@@ -177,6 +181,8 @@ public class UserServiceImpl implements UserService {
         try{
             emailService.sendPasswordResetEmail(user.getEmail(), resetUrl);
             log.info("Password ResetEmail send successfully");
+            auditLogService.logAction("AUTH_PASSWORD_RESET_REQUEST", user.getUserName(), null,
+                    "email flow initiated");
         } catch (Exception ex){
             log.debug("Failed to send password reset email to: {}", email);
             throw ex;
@@ -201,6 +207,8 @@ public class UserServiceImpl implements UserService {
         userRepository.save(user);
         resetToken.setUsed(true);
         passwordResetTokenRepository.save(resetToken);
+        auditLogService.logAction("AUTH_PASSWORD_RESET_COMPLETE", user.getUserName(), null,
+                "password changed via reset token");
     }
 
     @Override
@@ -222,6 +230,7 @@ public class UserServiceImpl implements UserService {
         GoogleAuthenticatorKey key = totpService.generateSecret();
         user.setTwoFactorSecret(key.getKey());
         userRepository.save(user);
+        auditLogService.logAction("AUTH_2FA_SECRET_GENERATED", user.getUserName(), null, "userId=" + userId);
         return key;
     }
 
@@ -235,6 +244,7 @@ public class UserServiceImpl implements UserService {
         User user=userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         user.setTwoFactorEnabled(true);
         userRepository.save(user);
+        auditLogService.logAction("AUTH_2FA_ENABLE", user.getUserName(), null, "userId=" + userId);
         System.out.println("2FA enabled");
     }
     @Override
@@ -242,14 +252,18 @@ public class UserServiceImpl implements UserService {
         User user=userRepository.findById(userId).orElseThrow(() -> new RuntimeException("User not found"));
         user.setTwoFactorEnabled(false);
         userRepository.save(user);
+        auditLogService.logAction("AUTH_2FA_DISABLE", user.getUserName(), null, "userId=" + userId);
         System.out.println("2FA disabled");
     }
 
     @Override
     public void updateCredentials(User user, String newUsername, String newPassword) {
+        String oldName = user.getUserName();
         user.setUserName(newUsername);
         user.setPassword(passwordEncoder.encode(newPassword));
         userRepository.save(user);
+        auditLogService.logAction("AUTH_CREDENTIALS_UPDATE", newUsername != null ? newUsername : oldName, null,
+                "previousUserName=" + oldName);
     }
 }
 

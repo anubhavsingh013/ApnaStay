@@ -4,20 +4,28 @@ import com.secure.apnastaybackend.dto.request.ProfileRequest;
 import com.secure.apnastaybackend.dto.response.ApprovalStatusResponse;
 import com.secure.apnastaybackend.dto.response.ProfileDTO;
 import com.secure.apnastaybackend.dto.response.ProfileListItemDTO;
+import com.secure.apnastaybackend.dto.response.ProfilePhotoResponse;
 import com.secure.apnastaybackend.entity.*;
 import com.secure.apnastaybackend.exceptions.BadRequestException;
 import com.secure.apnastaybackend.exceptions.ResourceNotFoundException;
 import com.secure.apnastaybackend.repositories.ProfileRepository;
+import com.secure.apnastaybackend.repositories.UserProfilePictureRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.ProfileService;
+import com.secure.apnastaybackend.services.PropertyImageUploadValidator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 @Service
@@ -31,6 +39,15 @@ public class ProfileServiceImpl implements ProfileService {
     private ProfileRepository profileRepository;
     @Autowired
     private UserRepository userRepository;
+    @Autowired
+    private AuditLogService auditLogService;
+    @Autowired
+    private UserProfilePictureRepository userProfilePictureRepository;
+    @Autowired
+    private PropertyImageUploadValidator propertyImageUploadValidator;
+
+    @Value("${app.public-base-url:}")
+    private String publicBaseUrl;
 
     @Override
     @Transactional(readOnly = true)
@@ -65,6 +82,8 @@ public class ProfileServiceImpl implements ProfileService {
 
         Profile saved = profileRepository.save(profile);
         log.info("Profile details updated: user={} role={}", userName, profileRole);
+        auditLogService.logAction("PROFILE_UPDATE", userName, null,
+                "profileId=" + saved.getId() + " role=" + profileRole + " status=" + saved.getStatus());
         return toDTO(saved);
     }
 
@@ -94,6 +113,8 @@ public class ProfileServiceImpl implements ProfileService {
         profile.setSubmittedAt(LocalDateTime.now());
         Profile saved = profileRepository.save(profile);
         log.info("Profile submitted for review: user={} role={}", userName, profileRole);
+        auditLogService.logAction("PROFILE_SUBMIT_REVIEW", userName, null,
+                "profileId=" + saved.getId() + " role=" + profileRole);
         return toDTO(saved);
     }
 
@@ -192,7 +213,7 @@ public class ProfileServiceImpl implements ProfileService {
 
     @Override
     @Transactional
-    public void approveProfile(AppRole role, Long id, String adminNote) {
+    public void approveProfile(AppRole role, Long id, String adminNote, String adminUsername) {
         Profile profile = profileRepository.findByIdAndProfileRole(id, role)
                 .orElseThrow(() -> new ResourceNotFoundException("Profile", "id/role", id + "/" + role));
         profile.setStatus(ProfileStatus.APPROVED);
@@ -200,11 +221,14 @@ public class ProfileServiceImpl implements ProfileService {
         profile.setAdminNote(adminNote);
         profileRepository.save(profile);
         log.info("Profile {} approved", id);
+        String subject = profile.getUser() != null ? profile.getUser().getUserName() : "?";
+        auditLogService.logAction("PROFILE_APPROVE", adminUsername, null,
+                "profileId=" + id + " role=" + role + " user=" + subject + auditNoteSuffix(adminNote));
     }
 
     @Override
     @Transactional
-    public void rejectProfile(AppRole role, Long id, String adminNote) {
+    public void rejectProfile(AppRole role, Long id, String adminNote, String adminUsername) {
         Profile profile = profileRepository.findByIdAndProfileRole(id, role)
                 .orElseThrow(() -> new ResourceNotFoundException("Profile", "id/role", id + "/" + role));
         profile.setStatus(ProfileStatus.REJECTED);
@@ -212,6 +236,20 @@ public class ProfileServiceImpl implements ProfileService {
         profile.setAdminNote(adminNote);
         profileRepository.save(profile);
         log.info("Profile {} rejected", id);
+        String subject = profile.getUser() != null ? profile.getUser().getUserName() : "?";
+        auditLogService.logAction("PROFILE_REJECT", adminUsername, null,
+                "profileId=" + id + " role=" + role + " user=" + subject + auditNoteSuffix(adminNote));
+    }
+
+    private static String auditNoteSuffix(String adminNote) {
+        if (adminNote == null || adminNote.isBlank()) {
+            return "";
+        }
+        String t = adminNote.trim();
+        if (t.length() > 200) {
+            t = t.substring(0, 197) + "...";
+        }
+        return " note=" + t.replace('\n', ' ');
     }
 
     @Override
@@ -233,6 +271,75 @@ public class ProfileServiceImpl implements ProfileService {
                 .orElse(null);
         boolean approved = status == ProfileStatus.APPROVED;
         return new ApprovalStatusResponse(approved, status);
+    }
+
+    @Override
+    @Transactional
+    public ProfilePhotoResponse uploadProfilePhoto(String userName, MultipartFile file) {
+        propertyImageUploadValidator.validateFile(file);
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+        byte[] data;
+        try {
+            data = file.getBytes();
+        } catch (IOException e) {
+            throw new BadRequestException("Could not read uploaded image.");
+        }
+        if (data.length == 0) {
+            throw new BadRequestException("Image file is empty.");
+        }
+        String ct = normalizeImageContentType(file.getContentType());
+        UserProfilePicture row = userProfilePictureRepository.findByUser_UserId(user.getUserId())
+                .orElseGet(() -> {
+                    UserProfilePicture p = new UserProfilePicture();
+                    p.setUser(user);
+                    return p;
+                });
+        row.setContentType(ct);
+        row.setData(data);
+        userProfilePictureRepository.save(row);
+        log.info("Profile photo saved: userId={}", user.getUserId());
+        auditLogService.logAction("PROFILE_PHOTO_UPLOAD", userName, null, "userId=" + user.getUserId());
+        return new ProfilePhotoResponse(user.getUserId(), buildProfilePhotoUrl(user.getUserId()));
+    }
+
+    @Override
+    @Transactional
+    public void deleteProfilePhoto(String userName) {
+        User user = userRepository.findByUserName(userName)
+                .orElseThrow(() -> new ResourceNotFoundException("User", "username", userName));
+        userProfilePictureRepository.deleteByUser_UserId(user.getUserId());
+        log.info("Profile photo removed: userId={}", user.getUserId());
+        auditLogService.logAction("PROFILE_PHOTO_DELETE", userName, null, "userId=" + user.getUserId());
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public UserProfilePicture getProfilePhotoForDownload(Long userId) {
+        return userProfilePictureRepository.findByUser_UserId(userId)
+                .orElseThrow(() -> new ResourceNotFoundException("Profile photo", "userId", userId));
+    }
+
+    private static String normalizeImageContentType(String raw) {
+        String d = raw != null ? raw.toLowerCase(Locale.ROOT).trim().replace(" ", "") : "";
+        if ("image/jpg".equals(d)) {
+            return "image/jpeg";
+        }
+        if (d.isBlank()) {
+            return "image/jpeg";
+        }
+        return d;
+    }
+
+    private String buildProfilePhotoUrl(Long userId) {
+        String path = "/api/profile/photo/" + userId;
+        if (publicBaseUrl == null || publicBaseUrl.isBlank()) {
+            return path;
+        }
+        String base = publicBaseUrl.endsWith("/")
+                ? publicBaseUrl.substring(0, publicBaseUrl.length() - 1)
+                : publicBaseUrl;
+        return base + path;
     }
 
     private void applyRequestToProfile(ProfileRequest req, Profile profile) {
@@ -286,6 +393,10 @@ public class ProfileServiceImpl implements ProfileService {
         dto.setAdminNote(p.getAdminNote());
         dto.setCreatedAt(p.getCreatedAt());
         dto.setUpdatedAt(p.getUpdatedAt());
+        Long uid = p.getUser().getUserId();
+        if (userProfilePictureRepository.existsByUser_UserId(uid)) {
+            dto.setProfilePictureUrl(buildProfilePhotoUrl(uid));
+        }
         return dto;
     }
 
@@ -298,6 +409,10 @@ public class ProfileServiceImpl implements ProfileService {
         dto.setDisplayName(p.getFullName() != null ? p.getFullName() : p.getUser().getUserName());
         dto.setStatus(p.getStatus());
         dto.setSubmittedAt(p.getSubmittedAt());
+        Long uid = p.getUser().getUserId();
+        if (userProfilePictureRepository.existsByUser_UserId(uid)) {
+            dto.setProfilePictureUrl(buildProfilePhotoUrl(uid));
+        }
         return dto;
     }
 }

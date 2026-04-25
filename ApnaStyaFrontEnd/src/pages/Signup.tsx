@@ -137,14 +137,14 @@ const Signup = () => {
                     <Label className="text-xs font-semibold uppercase tracking-wider text-stone-600">Username</Label>
                     <div className="relative group">
                       <User className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400 group-focus-within:text-primary transition-colors" />
-                      <Input placeholder="johndoe" className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm" value={username} onChange={(e) => setUsername(e.target.value)} />
+                      <Input placeholder="johndoe" className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm" value={username} onChange={(e) => setUsername(e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-xs font-semibold uppercase tracking-wider text-stone-600">Email</Label>
                     <div className="relative group">
                       <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-stone-400 group-focus-within:text-primary transition-colors" />
-                      <Input type="email" placeholder="your@email.com" className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm" value={email} onChange={(e) => setEmail(e.target.value)} />
+                      <Input type="email" placeholder="your@email.com" className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm" value={email} onChange={(e) => setEmail(e.target.value)} />
                     </div>
                   </div>
                   <div className="space-y-1.5">
@@ -154,7 +154,7 @@ const Signup = () => {
                       <Input
                         type={showPassword ? "text" : "password"}
                         placeholder="••••••••"
-                        className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm"
+                        className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                       />
@@ -175,7 +175,7 @@ const Signup = () => {
                       <Input
                         type={showConfirm ? "text" : "password"}
                         placeholder="••••••••"
-                        className={`pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm ${
+                        className={`pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm ${
                           passwordsMatch ? "border-primary/50" : passwordsMismatch ? "border-destructive/50" : ""
                         }`}
                         value={confirmPassword}
@@ -246,7 +246,7 @@ const Signup = () => {
                         <Input
                           type="tel"
                           placeholder="+91 98765 43210"
-                          className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm"
+                          className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm"
                           value={phoneOnly}
                           onChange={(e) => setPhoneOnly(e.target.value)}
                         />
@@ -274,7 +274,7 @@ const Signup = () => {
                         <InputOTP maxLength={6} value={otp} onChange={(val) => setOtp(val)}>
                           <InputOTPGroup className="gap-2">
                             {[0, 1, 2, 3, 4, 5].map(i => (
-                              <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                              <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-0" />
                             ))}
                           </InputOTPGroup>
                         </InputOTP>

@@ -2,7 +2,7 @@ import { ShieldCheck, Clock, XCircle, HelpCircle, CheckCircle } from "lucide-rea
 
 /** Shared with TwoFactorBadge so verification + 2FA pills align in profile headers */
 const statusPillClass =
-  "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium leading-none";
+  "inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2 text-xs font-medium leading-none w-max max-w-full";
 
 export type VerificationStatus = "APPROVED" | "PENDING" | "IN_PROGRESS" | "REJECTED" | null;
 

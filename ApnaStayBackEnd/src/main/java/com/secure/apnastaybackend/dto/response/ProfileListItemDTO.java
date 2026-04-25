@@ -22,5 +22,8 @@ public class ProfileListItemDTO {
     private ProfileStatus status;
     @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm:ss")
     private LocalDateTime submittedAt;
+
+    /** Absolute or relative URL to GET profile photo; null if none. */
+    private String profilePictureUrl;
 }
 

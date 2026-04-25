@@ -58,6 +58,7 @@ import {
   type LeasePaymentDTO,
   type AuditLogDTO,
   getDecodedToken,
+  resolveApiMediaUrl,
 } from "@/lib/api";
 import { EMPTY_PROPERTY_FORM, DESCRIPTION_MAX_LENGTH } from "@/utils/propertyConstants";
 import { PropertyFormMuiFields } from "@/components/dashboard/PropertyFormMuiFields";
@@ -76,7 +77,7 @@ import {
   Users, ShieldCheck, Building2, Lock, Unlock, Ban, CheckCircle,
   Key, Trash2, Eye, Search, AlertCircle, Clock, FileText, UserPlus,
   IndianRupee, Bell, ChevronRight, ChevronLeft, User, MapPin, Phone, Mail, Calendar,
-  CalendarClock, CalendarX2, Plus, Pencil, X, XCircle,
+  CalendarClock, CalendarX2, Plus, Pencil, X, XCircle, Filter, ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +87,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { TwoFactorBadge } from "@/components/auth/TwoFactorBadge";
 import { DemoModeLoginPrompt } from "@/features/demo/DemoModeLoginPrompt";
+import { ProfilePhotoSection } from "@/components/profile/ProfilePhotoSection";
+import { DashboardNavShell } from "@/components/dashboard/DashboardNavShell";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { indianStates, isPincodeValidForState } from "@/constants/indianStates";
@@ -114,6 +117,96 @@ const formatDob = (dob: string) => {
   return isNaN(d.getTime()) ? dob : `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 };
 
+type AuditActionTone = "delete" | "create" | "unpublish" | "update" | "neutral";
+
+function auditLogActionTone(action: string): AuditActionTone {
+  const a = (action ?? "").toLowerCase();
+  if (/unpublish/.test(a)) return "unpublish";
+  if (/delete|remove|reject|lock|disable|cancel|revoke/.test(a)) return "delete";
+  if (/create|signup|sign_up|approve|enable|publish|add|complete|verify|grant/.test(a)) return "create";
+  if (/update|modify|edit|change|assign|submit|status|upload|reset|extend|expire|save|message|response|hide|show/.test(a)) return "update";
+  return "neutral";
+}
+
+function auditLogActionLabel(action: string): string {
+  const raw = (action ?? "").trim();
+  if (!raw) return "UPDATE";
+  const upper = raw.toUpperCase();
+  const parts = upper.split("_").filter(Boolean);
+  const last = parts.length ? parts[parts.length - 1] : upper;
+  return last.length > 18 ? `${last.slice(0, 16)}…` : last;
+}
+
+function auditLogActionStyle(action: string): { label: string; pillClass: string } {
+  const label = auditLogActionLabel(action);
+  const tone = auditLogActionTone(action);
+  const base = "inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide tabular-nums";
+  switch (tone) {
+    case "delete":
+      return {
+        label,
+        pillClass: `${base} bg-red-50 text-red-700 ring-1 ring-inset ring-red-200/80 dark:bg-red-950/50 dark:text-red-300 dark:ring-red-800/60`,
+      };
+    case "create":
+      return {
+        label,
+        pillClass: `${base} bg-emerald-50 text-emerald-800 ring-1 ring-inset ring-emerald-200/80 dark:bg-emerald-950/45 dark:text-emerald-300 dark:ring-emerald-800/50`,
+      };
+    case "unpublish":
+      return {
+        label,
+        pillClass: `${base} bg-amber-50 text-amber-900 ring-1 ring-inset ring-amber-200/90 dark:bg-amber-950/40 dark:text-amber-200 dark:ring-amber-800/60`,
+      };
+    case "update":
+      return {
+        label,
+        pillClass: `${base} bg-sky-50 text-sky-900 ring-1 ring-inset ring-sky-200/90 dark:bg-sky-950/40 dark:text-sky-200 dark:ring-sky-800/55`,
+      };
+    default:
+      return {
+        label,
+        pillClass: `${base} bg-slate-100 text-slate-800 ring-1 ring-inset ring-slate-200/90 dark:bg-slate-800/80 dark:text-slate-200 dark:ring-slate-600/60`,
+      };
+  }
+}
+
+function auditLogEntityType(l: AuditLogDTO): string {
+  const a = (l.action ?? "").toUpperCase();
+  const c = (l.propertyContent ?? "").toLowerCase();
+  if (/^ADMIN_/.test(a)) return "Admin";
+  if (/^AUTH_/.test(a)) return "Auth";
+  if (/^PROFILE_|_PROFILE/.test(a) || c.includes("profileid")) return "Profile";
+  if (/^PROPERTY_REVIEW|^REVIEW_/.test(a)) return "Review";
+  if (/^PROPERTY_|_PROPERTY/.test(a) || (l.propertyId != null && /PROPERTY/.test(a))) return "Property";
+  if (/^COMPLAINT|^COMPLAINT_/.test(a)) return "Complaint";
+  if (/^ENGAGEMENT_|^SAVED_/.test(a)) return "Engagement";
+  if (/^RENTAL|^LEASE_|LEASE_/.test(a) || c.includes("lease") || c.includes("rental")) return "Rental";
+  if (/PAYMENT|LEASE_PAYMENT/.test(a) || c.includes("payment")) return "Payment";
+  return "System";
+}
+
+/** Stable id string for display + tooltips */
+function auditLogEntityIdFull(l: AuditLogDTO): string {
+  const c = l.propertyContent ?? "";
+  const m = c.match(/\b(profileId|complaintId|userId|searchId|applicationId|leaseId|reviewId)\s*=\s*([^,\s]+)/i);
+  if (m) return `${m[1]}=${m[2]}`;
+  if (l.propertyId != null && l.propertyId !== undefined) return `property-${l.propertyId}`;
+  return `audit-${l.id}`;
+}
+
+function auditLogEntityIdShort(full: string): string {
+  if (full.length <= 18) return full;
+  return `${full.slice(0, 10)}…${full.slice(-5)}`;
+}
+
+function userInitials(username: string | null | undefined): string {
+  const u = (username ?? "?").trim();
+  if (!u) return "?";
+  const parts = u.replace(/[^a-zA-Z0-9]+/g, " ").trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return u.slice(0, 2).toUpperCase();
+}
+
 /** Normalize profile (API or demo) for list display and filtering */
 function getProfileDisplay(p: AdminProfileItem | ProfileDTO): { name: string; user: string; profileType: "OWNER" | "BROKER" | "USER"; status: string; submittedAt: string } {
   if ("profileRole" in p) {
@@ -125,6 +218,26 @@ function getProfileDisplay(p: AdminProfileItem | ProfileDTO): { name: string; us
   const name = "name" in a ? (a as { name: string }).name : "";
   const user = "ownerUser" in a ? (a as { ownerUser: string }).ownerUser : "brokerUser" in a ? (a as { brokerUser: string }).brokerUser : "tenantUser" in a ? (a as { tenantUser: string }).tenantUser : "";
   return { name, user, profileType: a.profileType, status: a.status, submittedAt: a.submittedAt };
+}
+
+function ProfileRowAvatar({ p }: { p: AdminProfileItem | ProfileDTO }) {
+  const d = getProfileDisplay(p);
+  if ("profileRole" in p && p.profilePictureUrl) {
+    return (
+      <img
+        src={resolveApiMediaUrl(p.profilePictureUrl)}
+        alt=""
+        className="h-10 w-10 rounded-full object-cover shrink-0 border border-slate-200/80 dark:border-slate-600"
+      />
+    );
+  }
+  const label = (d.name || d.user || "").trim();
+  const ini = label.length >= 2 ? label.slice(0, 2).toUpperCase() : label ? label.slice(0, 1).toUpperCase() : "?";
+  return (
+    <div className="h-10 w-10 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center text-[10px] font-semibold text-slate-600 dark:text-slate-200 shrink-0">
+      {ini}
+    </div>
+  );
 }
 
 /** User from GET /api/admin/getusers (list includes role) */
@@ -213,6 +326,9 @@ const AdminDashboard = () => {
   const [auditLogs, setAuditLogs] = useState<AuditLogDTO[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditPage, setAuditPage] = useState(1);
+  const [auditFilterQuery, setAuditFilterQuery] = useState("");
+  const [auditPageSize, setAuditPageSize] = useState(25);
+  const [auditDetailLog, setAuditDetailLog] = useState<AuditLogDTO | null>(null);
   const [incomingPage, setIncomingPage] = useState(1);
   const [incomingSearchQuery, setIncomingSearchQuery] = useState("");
   const [incomingStatusFilter, setIncomingStatusFilter] = useState<string | null>(null);
@@ -237,6 +353,7 @@ const AdminDashboard = () => {
   const [account2faEnabled, setAccount2faEnabled] = useState<boolean | null>(null);
   const [account2faDialogOpen, setAccount2faDialogOpen] = useState(false);
   const [demoLoginPromptOpen, setDemoLoginPromptOpen] = useState(false);
+  const [adminHasProfilePhoto, setAdminHasProfilePhoto] = useState(false);
 
   const [apiProperties, setApiProperties] = useState<PropertyDTO[]>([]);
   const [propertiesLoading, setPropertiesLoading] = useState(false);
@@ -251,6 +368,19 @@ const AdminDashboard = () => {
   const displayName = demoMode ? "admin_user" : (user?.username ?? "Admin");
   const decodedToken = getDecodedToken();
   const useRealApi = !demoMode && isAdmin;
+
+  useEffect(() => {
+    const id = decodedToken?.userId;
+    if (!useRealApi || id == null) {
+      setAdminHasProfilePhoto(false);
+      return;
+    }
+    const ac = new AbortController();
+    fetch(resolveApiMediaUrl(`/api/profile/photo/${id}`), { method: "HEAD", signal: ac.signal })
+      .then((r) => setAdminHasProfilePhoto(r.ok))
+      .catch(() => setAdminHasProfilePhoto(false));
+    return () => ac.abort();
+  }, [useRealApi, decodedToken?.userId]);
   useExitDemoOnDashboardAction(demoMode, exitDemoAndSignIn, navigate);
   /** Demo / no API: avoid perpetual null → spinners on 2FA badge and settings */
   const account2faForUi: boolean | null = !useRealApi ? (account2faEnabled ?? false) : account2faEnabled;
@@ -352,7 +482,7 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     setAuditPage(1);
-  }, [activeTab, auditLogs.length]);
+  }, [activeTab, auditFilterQuery, auditPageSize, auditLogs.length]);
 
   useEffect(() => {
     setIncomingPage(1);
@@ -665,12 +795,23 @@ const AdminDashboard = () => {
     APPROVED: filteredProfiles.filter(p => getProfileDisplay(p).status === "APPROVED"),
     REJECTED: filteredProfiles.filter(p => getProfileDisplay(p).status === "REJECTED"),
   };
-  const sortedAuditLogs = auditLogs
-    .slice()
-    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-  const auditPageSize = 10;
-  const auditTotalPages = Math.max(1, Math.ceil(sortedAuditLogs.length / auditPageSize));
-  const pagedAuditLogs = sortedAuditLogs.slice((auditPage - 1) * auditPageSize, auditPage * auditPageSize);
+  const filteredSortedAuditLogs = useMemo(() => {
+    const q = auditFilterQuery.trim().toLowerCase();
+    const rows = auditLogs
+      .slice()
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (!q) return rows;
+    return rows.filter((l) => {
+      const hay = [l.username, l.action, l.propertyContent, String(l.propertyId ?? ""), String(l.id)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [auditLogs, auditFilterQuery]);
+  const auditTotalPages = Math.max(1, Math.ceil(filteredSortedAuditLogs.length / auditPageSize));
+  const clampedAuditPage = Math.min(Math.max(1, auditPage), auditTotalPages);
+  const pagedAuditLogs = filteredSortedAuditLogs.slice((clampedAuditPage - 1) * auditPageSize, clampedAuditPage * auditPageSize);
   const incomingPageSize = 8;
   const pendingIncomingCount = rentalApplications.filter((a) => a.status === "PENDING").length;
   const filteredIncomingApps = rentalApplications
@@ -1166,45 +1307,46 @@ const AdminDashboard = () => {
           <p className="text-sm text-muted-foreground mt-1">Manage users, properties, requests & complaints</p>
         </div>
 
-        <div data-demo-allow className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
-          {tabs.map((t) => (
-            <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
-              <t.icon className="h-3.5 w-3.5" />{t.label}
-              {t.id === "properties" && pendingProperties.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingProperties.length}</span>}
-              {t.id === "notifications" && unreadCount > 0 && <span className="bg-destructive text-destructive-foreground text-[10px] rounded-full px-1.5 font-medium">{unreadCount}</span>}
-              {t.id === "requests" && pendingProfiles.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingProfiles.length}</span>}
-              {t.id === "incoming-requests" && pendingIncomingCount > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingIncomingCount}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-6">
-          <aside data-demo-allow className="hidden md:block w-56 shrink-0">
-            <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 sticky top-20 shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 ring-1 ring-slate-100 dark:ring-slate-800/80 border-l-4 border-l-sky-500/80 dark:border-l-sky-400/60">
-              <div className="flex items-center gap-3 pb-3 border-b border-slate-200/80 dark:border-slate-700/80 mb-3">
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-sky-600/10 dark:from-sky-400/25 dark:to-sky-500/15 flex items-center justify-center ring-2 ring-sky-400/20 dark:ring-sky-500/30"><ShieldCheck className="h-5 w-5 text-sky-600 dark:text-sky-400" /></div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{displayName}</p>
-                  <span className="inline-block mt-0.5 px-2 py-0.5 rounded-md bg-sky-500/15 dark:bg-sky-400/20 text-sky-700 dark:text-sky-300 text-xs font-semibold tracking-wide">Administrator</span>
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                {tabs.map((t) => (
-                  <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-sky-300 dark:border-sky-600/60 bg-sky-50/80 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
-                    <t.icon className="h-4 w-4 shrink-0" />{t.label}
-                    {t.id === "properties" && pendingProperties.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingProperties.length}</span>}
-                    {t.id === "notifications" && unreadCount > 0 && <span className="ml-auto bg-destructive text-destructive-foreground text-xs rounded-full px-1.5 py-0.5 font-medium">{unreadCount}</span>}
-                    {t.id === "requests" && pendingProfiles.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingProfiles.length}</span>}
-                    {t.id === "incoming-requests" && pendingIncomingCount > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingIncomingCount}</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
-
-          <div className="flex-1 min-w-0 space-y-4">
+        <DashboardNavShell
+          accent="sky"
+          dataDemoAllow
+          tabs={tabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          user={{
+            displayName: decodedToken?.sub ?? displayName,
+            subtitle: decodedToken?.email ?? undefined,
+            roleLabel: "Administrator",
+            avatarUrl:
+              useRealApi && adminHasProfilePhoto && decodedToken?.userId != null
+                ? resolveApiMediaUrl(`/api/profile/photo/${decodedToken.userId}`)
+                : undefined,
+            fallbackIcon: ShieldCheck,
+          }}
+          renderTabBadge={(id) => {
+            if (id === "properties" && pendingProperties.length > 0) {
+              return (
+                <span className="bg-amber-500 text-amber-950 text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{pendingProperties.length}</span>
+              );
+            }
+            if (id === "notifications" && unreadCount > 0) {
+              return (
+                <span className="bg-destructive text-destructive-foreground text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{unreadCount}</span>
+              );
+            }
+            if (id === "requests" && pendingProfiles.length > 0) {
+              return (
+                <span className="bg-amber-500 text-amber-950 text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{pendingProfiles.length}</span>
+              );
+            }
+            if (id === "incoming-requests" && pendingIncomingCount > 0) {
+              return (
+                <span className="bg-amber-500 text-amber-950 text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{pendingIncomingCount}</span>
+              );
+            }
+            return null;
+          }}
+        >
             {activeTab === "overview" && (
               <>
                 <div data-demo-allow className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -1554,6 +1696,7 @@ const AdminDashboard = () => {
                             className={`bg-card rounded-xl border shadow-sm cursor-pointer transition-all active:scale-[0.995] p-4 hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md ${d.status === "APPROVED" ? "border-l-4 border-l-emerald-500 border-slate-200 dark:border-slate-700" : d.status === "IN_PROGRESS" ? "border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-700" : "border border-slate-200 dark:border-slate-700"}`}
                           >
                             <div className="flex items-start justify-between gap-3">
+                              <ProfileRowAvatar p={p} />
                               <div className="min-w-0 flex-1">
                                 <p className="text-sm font-semibold text-card-foreground">{d.name}</p>
                                 <p className="text-xs text-muted-foreground truncate mt-0.5">{d.user} • Submitted {new Date(d.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -1597,6 +1740,7 @@ const AdminDashboard = () => {
                                 className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]"
                               >
                                 <div className="flex items-start justify-between gap-3">
+                                  <ProfileRowAvatar p={p} />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-card-foreground">{d.name}</p>
                                     <p className="text-xs text-muted-foreground truncate mt-0.5">{d.user} • Submitted {new Date(d.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -1630,6 +1774,7 @@ const AdminDashboard = () => {
                                 className="bg-card rounded-xl border border-l-4 border-l-amber-500 border-slate-200 dark:border-slate-700 shadow-sm p-4 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]"
                               >
                                 <div className="flex items-start justify-between gap-3">
+                                  <ProfileRowAvatar p={p} />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-card-foreground">{d.name}</p>
                                     <p className="text-xs text-muted-foreground truncate mt-0.5">{d.user} • Submitted {new Date(d.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -1663,6 +1808,7 @@ const AdminDashboard = () => {
                                 className="bg-card rounded-xl border-l-4 border-l-emerald-500 border border-slate-200 dark:border-slate-700 shadow-sm p-4 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]"
                               >
                                 <div className="flex items-start justify-between gap-3">
+                                  <ProfileRowAvatar p={p} />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-card-foreground">{d.name}</p>
                                     <p className="text-xs text-muted-foreground truncate mt-0.5">{d.user} • Submitted {new Date(d.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -1698,6 +1844,7 @@ const AdminDashboard = () => {
                                 className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm p-4 cursor-pointer hover:border-sky-300 dark:hover:border-sky-600 hover:bg-sky-50/50 dark:hover:bg-sky-900/20 hover:shadow-md transition-all active:scale-[0.995]"
                               >
                                 <div className="flex items-start justify-between gap-3">
+                                  <ProfileRowAvatar p={p} />
                                   <div className="min-w-0 flex-1">
                                     <p className="text-sm font-semibold text-card-foreground">{d.name}</p>
                                     <p className="text-xs text-muted-foreground truncate mt-0.5">{d.user} • Submitted {new Date(d.submittedAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</p>
@@ -2070,55 +2217,290 @@ const AdminDashboard = () => {
             )}
 
             {activeTab === "audit-logs" && (
-              <div className="space-y-4">
-                <div className="rounded-xl bg-white/90 dark:bg-slate-900/80 backdrop-blur border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4">
-                  <h2 className="text-lg font-bold text-foreground">Audit Logs</h2>
-                  <p className="text-xs text-muted-foreground mt-0.5">All critical actions recorded from backend services.</p>
+              <div className="overflow-hidden rounded-xl border border-slate-200/90 bg-white shadow-[0_1px_3px_rgba(15,23,42,0.06)] dark:border-slate-700 dark:bg-slate-950 dark:shadow-none">
+                <div className="border-b border-slate-100 px-6 pb-5 pt-7 dark:border-slate-800">
+                  <h2 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-slate-50">Audit Logs</h2>
+                  <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                    Monitor changes across users, properties, rentals, and system actions. Filter the list or open a row for the full payload.
+                  </p>
+                  <a
+                    href="#audit-logs"
+                    className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-sky-600 transition-colors hover:text-sky-700 dark:text-sky-400 dark:hover:text-sky-300"
+                    onClick={(e) => e.preventDefault()}
+                  >
+                    Learn more
+                    <ExternalLink className="h-3.5 w-3.5 opacity-80" aria-hidden />
+                  </a>
                 </div>
+
+                <div className="border-b border-slate-100 px-6 py-3.5 dark:border-slate-800">
+                  <div className="relative max-w-xl">
+                    <Filter className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden />
+                    <Input
+                      type="search"
+                      placeholder="Filter by user, action, or details…"
+                      value={auditFilterQuery}
+                      onChange={(e) => setAuditFilterQuery(e.target.value)}
+                      className="h-10 rounded-lg border-slate-200 bg-slate-50/80 pl-10 text-sm placeholder:text-slate-400 focus:bg-white dark:border-slate-600 dark:bg-slate-900/80 dark:focus:bg-slate-900"
+                      aria-label="Filter audit logs"
+                    />
+                  </div>
+                </div>
+
                 {auditLoading ? (
-                  <div className="py-8 text-center text-sm text-muted-foreground">Loading audit logs...</div>
-                ) : auditLogs.length === 0 ? (
-                  <div className="bg-card rounded-xl border border-slate-200 dark:border-slate-700 p-12 text-center">
-                    <Clock className="h-12 w-12 text-muted-foreground/70 mx-auto mb-3" />
-                    <p className="text-sm font-medium text-foreground">No audit logs found</p>
+                  <div className="flex flex-col items-center justify-center gap-3 py-20 text-sm text-slate-500 dark:text-slate-400">
+                    <span className="h-8 w-8 animate-spin rounded-full border-2 border-slate-200 border-t-sky-600 dark:border-slate-600 dark:border-t-sky-400" aria-hidden />
+                    Loading audit logs…
                   </div>
                 ) : (
-                  <div className="space-y-3">
-                    <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
-                      <table className="w-full text-sm">
-                        <thead className="bg-slate-50 dark:bg-slate-800/60">
-                          <tr>
-                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">When</th>
-                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">User</th>
-                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Action</th>
-                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Property</th>
-                            <th className="text-left px-3 py-2 font-medium text-muted-foreground">Details</th>
+                  <>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[900px] table-fixed border-collapse text-sm">
+                        <colgroup>
+                          <col className="w-[22%]" />
+                          <col className="w-[16%]" />
+                          <col className="w-[12%]" />
+                          <col className="w-[11%]" />
+                          <col className="w-[11%]" />
+                          <col className="w-[28%]" />
+                        </colgroup>
+                        <thead>
+                          <tr className="border-b border-slate-200 bg-slate-50 dark:border-slate-800 dark:bg-slate-900/90">
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              User
+                            </th>
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Entity ID
+                            </th>
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Action
+                            </th>
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Type
+                            </th>
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Environment
+                            </th>
+                            <th className="px-5 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                              Timestamp
+                            </th>
                           </tr>
                         </thead>
-                        <tbody>
-                          {pagedAuditLogs.map((l) => (
-                            <tr key={l.id} className="border-t border-slate-200 dark:border-slate-700">
-                              <td className="px-3 py-2 whitespace-nowrap">{new Date(l.timestamp).toLocaleString()}</td>
-                              <td className="px-3 py-2">{l.username || "—"}</td>
-                              <td className="px-3 py-2">{l.action}</td>
-                              <td className="px-3 py-2">{l.propertyId != null ? `#${l.propertyId}` : "—"}</td>
-                              <td className="px-3 py-2 max-w-[380px] truncate" title={l.propertyContent ?? ""}>{l.propertyContent || "—"}</td>
+                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800/90">
+                          {pagedAuditLogs.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} className="px-5 py-16 text-center">
+                                <Clock className="mx-auto mb-3 h-10 w-10 text-slate-300 dark:text-slate-600" aria-hidden />
+                                <p className="text-sm font-medium text-slate-700 dark:text-slate-300">No audit logs found</p>
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-500">
+                                  {auditFilterQuery.trim() ? "Try adjusting your filter." : "Activity will appear here as changes are recorded."}
+                                </p>
+                              </td>
                             </tr>
-                          ))}
+                          ) : (
+                            pagedAuditLogs.map((l) => {
+                              const actionMeta = auditLogActionStyle(l.action);
+                              const entityFull = auditLogEntityIdFull(l);
+                              const entityShort = auditLogEntityIdShort(entityFull);
+                              const d = new Date(l.timestamp);
+                              const dateStr = Number.isNaN(d.getTime())
+                                ? "—"
+                                : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+                              const timeStr = Number.isNaN(d.getTime())
+                                ? ""
+                                : d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+                              const roleLabel =
+                                usersList.find((u) => u.userName === l.username)?.role?.roleName?.replace(/^ROLE_/, "") ??
+                                "User";
+                              const envLabel = import.meta.env.PROD ? "Master" : "Staging";
+
+                              return (
+                                <tr
+                                  key={l.id}
+                                  className="group cursor-pointer bg-white transition-colors hover:bg-slate-50/90 dark:bg-slate-950 dark:hover:bg-slate-900/80"
+                                  onClick={() => setAuditDetailLog(l)}
+                                >
+                                  <td className="px-5 py-4 align-top">
+                                    <div className="flex items-start gap-3">
+                                      <div
+                                        className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-slate-100 to-slate-200 text-xs font-semibold text-slate-700 ring-1 ring-slate-200/80 dark:from-slate-700 dark:to-slate-800 dark:text-slate-100 dark:ring-slate-600/80"
+                                        aria-hidden
+                                      >
+                                        {userInitials(l.username)}
+                                      </div>
+                                      <div className="min-w-0 flex-1 pt-0.5">
+                                        <p className="truncate font-semibold leading-tight text-slate-900 dark:text-slate-100">
+                                          {l.username || "Unknown"}
+                                        </p>
+                                        <p className="mt-0.5 text-xs leading-tight text-slate-500 dark:text-slate-400">{roleLabel}</p>
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="px-5 py-4 align-top">
+                                    <span
+                                      className="block truncate font-mono text-[11px] leading-snug text-slate-500 dark:text-slate-400"
+                                      title={entityFull}
+                                    >
+                                      {entityShort}
+                                    </span>
+                                  </td>
+                                  <td className="px-5 py-4 align-top">
+                                    <span className={actionMeta.pillClass}>{actionMeta.label}</span>
+                                  </td>
+                                  <td className="px-5 py-4 align-top text-slate-700 dark:text-slate-300">
+                                    <span className="text-[13px] font-medium leading-tight">{auditLogEntityType(l)}</span>
+                                  </td>
+                                  <td className="px-5 py-4 align-top">
+                                    <span className="inline-flex rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                                      {envLabel}
+                                    </span>
+                                  </td>
+                                  <td className="relative px-5 py-4 align-top">
+                                    <div className="min-h-[2.75rem] pr-1">
+                                      <div className="transition-opacity group-hover:opacity-0 group-hover:pointer-events-none">
+                                        <div className="text-[13px] font-medium tabular-nums text-slate-900 dark:text-slate-100">{dateStr}</div>
+                                        {timeStr ? (
+                                          <div className="mt-0.5 text-xs tabular-nums text-slate-500 dark:text-slate-400">{timeStr}</div>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        className="absolute left-5 top-4 text-sm font-medium text-sky-600 opacity-0 transition-opacity hover:underline group-hover:opacity-100 dark:text-sky-400"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setAuditDetailLog(l);
+                                        }}
+                                      >
+                                        View detail
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
-                    <div className="flex items-center justify-end gap-2">
-                      <Button type="button" variant="outline" size="sm" disabled={auditPage <= 1} onClick={() => setAuditPage((p) => Math.max(1, p - 1))}>
-                        <ChevronLeft className="h-4 w-4" /> Prev
-                      </Button>
-                      <span className="text-xs text-muted-foreground">Page {auditPage} of {auditTotalPages}</span>
-                      <Button type="button" variant="outline" size="sm" disabled={auditPage >= auditTotalPages} onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}>
-                        Next <ChevronRight className="h-4 w-4" />
-                      </Button>
+
+                    <div className="flex flex-col gap-4 border-t border-slate-100 bg-slate-50/50 px-5 py-4 text-sm dark:border-slate-800 dark:bg-slate-900/40 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="shrink-0 text-slate-600 dark:text-slate-400">
+                        <span className="font-semibold text-slate-900 dark:text-slate-100">{filteredSortedAuditLogs.length}</span>{" "}
+                        {filteredSortedAuditLogs.length === 1 ? "item" : "items"}
+                      </p>
+
+                      <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                        <button
+                          type="button"
+                          disabled={clampedAuditPage <= 1}
+                          onClick={() => setAuditPage((p) => Math.max(1, p - 1))}
+                          className="text-sm font-medium text-sky-600 disabled:pointer-events-none disabled:opacity-40 hover:underline dark:text-sky-400"
+                        >
+                          Previous
+                        </button>
+                        <span className="flex items-center gap-2 text-slate-600 dark:text-slate-400">
+                          Page
+                          <Input
+                            type="text"
+                            inputMode="numeric"
+                            aria-label="Current page"
+                            className="h-8 w-12 rounded-md border border-slate-200 bg-white px-1 text-center text-sm font-semibold tabular-nums text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                            value={String(clampedAuditPage)}
+                            onChange={(e) => {
+                              const t = e.target.value.replace(/\D/g, "");
+                              if (t === "") return;
+                              const v = parseInt(t, 10);
+                              if (!Number.isNaN(v) && v >= 1 && v <= auditTotalPages) setAuditPage(v);
+                            }}
+                          />
+                          of {auditTotalPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={clampedAuditPage >= auditTotalPages}
+                          onClick={() => setAuditPage((p) => Math.min(auditTotalPages, p + 1))}
+                          className="text-sm font-medium text-sky-600 disabled:pointer-events-none disabled:opacity-40 hover:underline dark:text-sky-400"
+                        >
+                          Next
+                        </button>
+                      </div>
+
+                      <div className="flex shrink-0 items-center justify-center gap-2 sm:justify-end">
+                        <span className="text-slate-600 dark:text-slate-400">Show</span>
+                        <Select
+                          value={String(auditPageSize)}
+                          onValueChange={(v) => {
+                            setAuditPageSize(Number(v));
+                            setAuditPage(1);
+                          }}
+                        >
+                          <SelectTrigger className="h-8 w-[4.75rem] rounded-md border border-slate-200 bg-white text-sm font-medium dark:border-slate-600 dark:bg-slate-900">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="10">10</SelectItem>
+                            <SelectItem value="25">25</SelectItem>
+                            <SelectItem value="50">50</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                  </div>
+                  </>
                 )}
+
+                <Dialog open={auditDetailLog != null} onOpenChange={(open) => !open && setAuditDetailLog(null)}>
+                  <DialogContent className="max-w-lg sm:max-w-xl" aria-describedby="audit-detail-desc">
+                    <DialogHeader>
+                      <DialogTitle>Audit log detail</DialogTitle>
+                      <DialogDescription id="audit-detail-desc">
+                        Full event payload from the server.
+                      </DialogDescription>
+                    </DialogHeader>
+                    {auditDetailLog && (
+                      <dl className="space-y-0 divide-y divide-slate-100 text-sm dark:divide-slate-800">
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">User</dt>
+                          <dd className="font-medium text-slate-900 dark:text-slate-100">{auditDetailLog.username || "—"}</dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Action</dt>
+                          <dd>
+                            <span className={auditLogActionStyle(auditDetailLog.action).pillClass}>
+                              {auditLogActionLabel(auditDetailLog.action)}
+                            </span>
+                            <p className="mt-1.5 break-all font-mono text-[11px] leading-relaxed text-slate-600 dark:text-slate-400">
+                              {auditDetailLog.action}
+                            </p>
+                          </dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Entity ID</dt>
+                          <dd className="break-all font-mono text-xs text-slate-800 dark:text-slate-200">{auditLogEntityIdFull(auditDetailLog)}</dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Type</dt>
+                          <dd className="font-medium text-slate-900 dark:text-slate-100">{auditLogEntityType(auditDetailLog)}</dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Property ID</dt>
+                          <dd className="font-mono text-xs text-slate-800 dark:text-slate-200">{auditDetailLog.propertyId ?? "—"}</dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Timestamp</dt>
+                          <dd className="tabular-nums text-slate-800 dark:text-slate-200">
+                            {new Date(auditDetailLog.timestamp).toLocaleString()}
+                          </dd>
+                        </div>
+                        <div className="grid grid-cols-1 gap-1 py-3 sm:grid-cols-[8rem_1fr] sm:gap-4">
+                          <dt className="pt-0.5 text-xs font-medium uppercase tracking-wide text-slate-500 dark:text-slate-400">Details</dt>
+                          <dd className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border border-slate-100 bg-slate-50 p-3 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/60 dark:text-slate-300">
+                            {auditDetailLog.propertyContent?.trim() || "—"}
+                          </dd>
+                        </div>
+                      </dl>
+                    )}
+                  </DialogContent>
+                </Dialog>
               </div>
             )}
 
@@ -2146,6 +2528,28 @@ const AdminDashboard = () => {
                 </div>
                 <div className="p-5 md:p-6">
                   <div className="space-y-8">
+                    {(useRealApi || demoMode) && (
+                      <ProfilePhotoSection
+                        userId={decodedToken?.userId ?? null}
+                        profilePictureUrl={
+                          useRealApi && adminHasProfilePhoto && decodedToken?.userId != null
+                            ? `/api/profile/photo/${decodedToken.userId}`
+                            : null
+                        }
+                        displayName={decodedToken?.sub ?? undefined}
+                        username={decodedToken?.sub}
+                        demoMode={demoMode}
+                        onDemoAction={() => setDemoLoginPromptOpen(true)}
+                        editable={useRealApi || demoMode}
+                        onMetaUpdated={() => {
+                          const id = getDecodedToken()?.userId;
+                          if (id == null) return;
+                          fetch(resolveApiMediaUrl(`/api/profile/photo/${id}`), { method: "HEAD" })
+                            .then((r) => setAdminHasProfilePhoto(r.ok))
+                            .catch(() => setAdminHasProfilePhoto(false));
+                        }}
+                      />
+                    )}
                     <div>
                       <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                         <span className="w-1 h-4 rounded-full bg-sky-500/70" /> Account
@@ -2193,8 +2597,7 @@ const AdminDashboard = () => {
         message="Please sign in to access the full feature."
       />
 
-          </div>
-        </div>
+        </DashboardNavShell>
       </div>
 
       {/* Profile Detail Dialog */}
@@ -2231,6 +2634,15 @@ const AdminDashboard = () => {
                   )}
                 </div>
               </div>
+              {"profileRole" in viewProfile && (viewProfile as ProfileDTO).profilePictureUrl && (
+                <div className="flex justify-center py-1">
+                  <img
+                    src={resolveApiMediaUrl((viewProfile as ProfileDTO).profilePictureUrl!)}
+                    alt=""
+                    className="h-24 w-24 rounded-full object-cover ring-2 ring-slate-200 dark:ring-slate-600"
+                  />
+                </div>
+              )}
               <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-muted/20 p-3 space-y-1">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Submitted</p>
                 <p className="text-sm text-foreground">{new Date(("submittedAt" in viewProfile ? viewProfile.submittedAt : (viewProfile as ProfileDTO).submittedAt) ?? "").toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</p>

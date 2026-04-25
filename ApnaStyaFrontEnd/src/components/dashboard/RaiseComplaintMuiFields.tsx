@@ -80,6 +80,11 @@ export function RaiseComplaintMuiFields({
               </option>
             ))}
           </TextField>
+          {properties.length === 0 && (
+            <Typography component="p" variant="caption" color="text.secondary" sx={{ gridColumn: "1 / -1" }}>
+              No rented property found yet. Complaints can be raised only for your rented properties.
+            </Typography>
+          )}
           {showAgainstSelect && (
             <TextField
               select

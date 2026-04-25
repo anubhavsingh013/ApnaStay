@@ -10,6 +10,7 @@ import com.secure.apnastaybackend.repositories.LeaseRepository;
 import com.secure.apnastaybackend.repositories.PropertyRepository;
 import com.secure.apnastaybackend.repositories.PropertyReviewRepository;
 import com.secure.apnastaybackend.repositories.UserRepository;
+import com.secure.apnastaybackend.services.AuditLogService;
 import com.secure.apnastaybackend.services.PropertyReviewService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -24,6 +25,7 @@ public class PropertyReviewServiceImpl implements PropertyReviewService {
     private final PropertyRepository propertyRepository;
     private final UserRepository userRepository;
     private final LeaseRepository leaseRepository;
+    private final AuditLogService auditLogService;
 
     @Override
     @Transactional
@@ -39,6 +41,8 @@ public class PropertyReviewServiceImpl implements PropertyReviewService {
         review.setComment(request.getComment().trim());
         review.setVerifiedStay(leaseRepository.existsByProperty_IdAndTenant_UserIdAndStatus(propertyId, reviewer.getUserId(), LeaseStatus.ACTIVE));
         PropertyReview saved = propertyReviewRepository.save(review);
+        auditLogService.logAction("PROPERTY_REVIEW_CREATE", userName, propertyId,
+                "reviewId=" + saved.getId() + " rating=" + request.getRating());
         return toDto(saved);
     }
 
@@ -62,7 +66,10 @@ public class PropertyReviewServiceImpl implements PropertyReviewService {
             throw new BadRequestException("Only property owner can respond to this review");
         }
         review.setOwnerResponse(request.getOwnerResponse().trim());
-        return toDto(propertyReviewRepository.save(review));
+        PropertyReview saved = propertyReviewRepository.save(review);
+        auditLogService.logAction("PROPERTY_REVIEW_OWNER_RESPONSE", userName, review.getProperty().getId(),
+                "reviewId=" + reviewId);
+        return toDto(saved);
     }
 
     @Override
@@ -77,6 +84,9 @@ public class PropertyReviewServiceImpl implements PropertyReviewService {
                 .orElseThrow(() -> new ResourceNotFoundException("PropertyReview", "id", reviewId));
         review.setVisible(visible);
         propertyReviewRepository.save(review);
+        auditLogService.logAction(visible ? "PROPERTY_REVIEW_SHOW" : "PROPERTY_REVIEW_HIDE", adminUserName,
+                review.getProperty().getId(),
+                "reviewId=" + reviewId);
     }
 
     private PropertyReviewDTO toDto(PropertyReview r) {

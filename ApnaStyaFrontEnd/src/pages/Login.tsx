@@ -165,7 +165,7 @@ const Login = () => {
                     <InputOTP maxLength={6} value={twoFactorCode} onChange={(val) => setTwoFactorCode(val)}>
                       <InputOTPGroup className="gap-2">
                         {[0, 1, 2, 3, 4, 5].map(i => (
-                          <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                          <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-0" />
                         ))}
                       </InputOTPGroup>
                     </InputOTP>
@@ -195,7 +195,7 @@ const Login = () => {
                     <Input
                       type="text"
                       placeholder="your@email.com"
-                      className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all text-sm"
+                      className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 transition-all text-sm"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                     />
@@ -208,7 +208,7 @@ const Login = () => {
                     <Input
                       type={showPassword ? "text" : "password"}
                       placeholder="••••••••"
-                      className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all text-sm"
+                      className="pl-11 pr-12 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 transition-all text-sm"
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                     />
@@ -258,7 +258,7 @@ const Login = () => {
                         <Input
                           type="tel"
                           placeholder="+91 98765 43210"
-                          className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:ring-2 focus:ring-primary/20 text-sm"
+                          className="pl-11 h-12 rounded-xl border-stone-200 bg-stone-50 text-stone-900 placeholder:text-stone-500 focus:bg-white focus:border-primary focus:outline-none focus:ring-0 text-sm"
                           value={phoneNumber}
                           onChange={(e) => setPhoneNumber(e.target.value)}
                         />
@@ -286,7 +286,7 @@ const Login = () => {
                         <InputOTP maxLength={6} value={otp} onChange={(val) => setOtp(val)}>
                           <InputOTPGroup className="gap-2">
                             {[0, 1, 2, 3, 4, 5].map(i => (
-                              <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                              <InputOTPSlot key={i} index={i} className="h-12 w-11 rounded-xl border-stone-200 bg-stone-50 text-lg font-semibold text-stone-900 focus:border-primary focus:outline-none focus:ring-0" />
                             ))}
                           </InputOTPGroup>
                         </InputOTP>

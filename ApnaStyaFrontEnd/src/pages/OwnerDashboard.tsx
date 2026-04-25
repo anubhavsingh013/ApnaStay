@@ -24,6 +24,7 @@ import {
   updateComplaintStatus as apiUpdateComplaintStatus,
   getUserIdByUsername,
   getDecodedToken,
+  resolveApiMediaUrl,
   getIncomingRentalApplications,
   approveRentalApplication,
   rejectRentalApplication,
@@ -69,6 +70,7 @@ import { PropertyFormMuiFields } from "@/components/dashboard/PropertyFormMuiFie
 import { RaiseComplaintMuiFields } from "@/components/dashboard/RaiseComplaintMuiFields";
 import { ComplaintDetailStatusButtons } from "@/components/dashboard/ComplaintDetailStatusButtons";
 import { OwnerProfileMuiForm } from "@/components/profile/OwnerProfileMuiForm";
+import { ProfilePhotoSection } from "@/components/profile/ProfilePhotoSection";
 import { ProfileUpdateDialog } from "@/components/profile/ProfileUpdateDialog";
 import { isProfileLocationComplete } from "@/components/profile/shared/profileLocationTypes";
 import { shouldPreventDialogCloseForMuiPicker } from "@/lib/muiPickerDialogGuard";
@@ -86,6 +88,7 @@ import { StatusFilterDropdown } from "@/components/common/StatusFilterDropdown";
 import { TwoFactorSettings } from "@/components/auth/TwoFactorSettings";
 import { SubmitProfileForReviewDialog } from "@/components/auth/SubmitProfileForReviewDialog";
 import { DemoModeLoginPrompt } from "@/features/demo/DemoModeLoginPrompt";
+import { DashboardNavShell } from "@/components/dashboard/DashboardNavShell";
 
 const OWNERS = ["rajesh_owner"];
 
@@ -307,6 +310,19 @@ const OwnerDashboard = () => {
         }
       })
       .finally(() => setProfileLoading(false));
+  };
+
+  const reloadProfileDataOnly = () => {
+    if (!useRealApi) return;
+    getProfile("ROLE_OWNER")
+      .then((res) => {
+        const data = (res as { data?: ProfileDTO }).data;
+        if (data && typeof data.id === "number") {
+          setApiProfile(data);
+          setApiApproved(data.status === "APPROVED");
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -599,7 +615,6 @@ const OwnerDashboard = () => {
 
   useEffect(() => {
     if (!useRealApi || !user) return;
-    if (activeTab !== "requests" && activeTab !== "payments" && activeTab !== "overview") return;
     setRentalLoading(true);
     Promise.all([getIncomingRentalApplications(), getMyLeases()])
       .then(async ([incomingRes, leasesRes]) => {
@@ -624,7 +639,7 @@ const OwnerDashboard = () => {
         setOwnerLeasePayments([]);
       })
       .finally(() => setRentalLoading(false));
-  }, [useRealApi, user, activeTab, currentOwner]);
+  }, [useRealApi, user, currentOwner]);
 
   const ownerProfileApproved = demoMode ? isOwnerProfileApproved(currentOwner) : (apiApproved === true || apiProfile?.status === "APPROVED");
   const verificationStatus: VerificationStatus = demoMode
@@ -1127,62 +1142,65 @@ const OwnerDashboard = () => {
           <p className="text-sm text-muted-foreground mt-1">Welcome, {currentOwner || "Owner"} — Manage your properties</p>
         </div>
 
-        {/* Mobile horizontal tabs */}
-        <div className="flex overflow-x-auto gap-1 pb-3 mb-4 -mx-4 px-4 md:hidden scrollbar-hide">
-          {tabs.map((t) => (
-            <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium whitespace-nowrap shrink-0 transition-colors border ${activeTab === t.id ? "border-sky-500/40 bg-sky-50 dark:bg-sky-900/20 text-sky-700 dark:text-sky-300 shadow-sm" : "border-slate-200 dark:border-slate-700 bg-muted/50 text-muted-foreground hover:bg-muted"}`}>
-              <t.icon className="h-3.5 w-3.5" />{t.label}
-              {t.id === "requests" && pendingRequests.length > 0 && <span className="bg-amber-500 text-amber-950 text-[10px] rounded-full px-1.5 font-medium">{pendingRequests.length}</span>}
-              {t.id === "notifications" && unreadCount > 0 && <span className="bg-destructive text-destructive-foreground text-[10px] rounded-full px-1.5 font-medium">{unreadCount}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-6">
-          <aside className="hidden md:block w-56 shrink-0">
-            <div className="bg-white dark:bg-slate-900/80 rounded-2xl border border-slate-200 dark:border-slate-700 p-4 sticky top-20 shadow-lg shadow-slate-200/50 dark:shadow-slate-950/50 ring-1 ring-slate-100 dark:ring-slate-800/80 border-l-4 border-l-sky-500/80 dark:border-l-sky-400/60">
-              <div className="flex items-center gap-3 pb-3 border-b border-slate-200/80 dark:border-slate-700/80 mb-3">
-                <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-sky-500/20 to-sky-600/10 dark:from-sky-400/25 dark:to-sky-500/15 flex items-center justify-center ring-2 ring-sky-400/20 dark:ring-sky-500/30"><User className="h-5 w-5 text-sky-600 dark:text-sky-400" /></div>
-                <div className="min-w-0">
-                  <p className="font-semibold text-foreground text-sm truncate">{currentOwner || "Owner"}</p>
-                  <div className="flex items-center gap-2 flex-wrap mt-0.5">
-                    <span className="inline-block px-2 py-0.5 rounded-md bg-sky-500/15 dark:bg-sky-400/20 text-sky-700 dark:text-sky-300 text-xs font-semibold tracking-wide">Owner</span>
-                    <VerificationBadge status={verificationStatus} showIcon={true} className="text-[10px]" approvedAsActiveStyle needsResubmit={profileUpdatedAfterLoad} onVerifyClick={demoMode ? () => setDemoLoginPromptOpen(true) : (useRealApi ? () => setVerifySubmitDialogOpen(true) : undefined)} />
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                {tabs.map((t) => (
-                  <button type="button" key={t.id} onClick={() => setActiveTab(t.id)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 border ${activeTab === t.id ? "border-sky-300 dark:border-sky-600/60 bg-sky-50/80 dark:bg-sky-900/30 text-sky-800 dark:text-sky-200 shadow-sm" : "border-transparent text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/60 hover:border-slate-200 dark:hover:border-slate-600 hover:text-slate-900 dark:hover:text-slate-100"}`}>
-                    <t.icon className="h-4 w-4 shrink-0" />{t.label}
-                    {t.id === "requests" && pendingRequests.length > 0 && <span className="ml-auto bg-amber-500 text-amber-950 text-xs rounded-full px-1.5 py-0.5 font-medium">{pendingRequests.length}</span>}
-                    {t.id === "notifications" && unreadCount > 0 && <span className="ml-auto bg-destructive text-destructive-foreground text-xs rounded-full px-1.5 py-0.5 font-medium">{unreadCount}</span>}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </aside>
-
-          <div className="flex-1 min-w-0 space-y-4">
+        <DashboardNavShell
+          accent="sky"
+          tabs={tabs}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          user={{
+            displayName: decodedToken?.sub ?? (useRealApi && apiProfile?.userName ? apiProfile.userName : currentOwner || "Owner"),
+            subtitle:
+              decodedToken?.email ??
+              (useRealApi && apiProfile?.email ? apiProfile.email : undefined) ??
+              (!useRealApi
+                ? (ownerProfiles.find((p) => p.ownerUser === currentOwner) as { email?: string } | undefined)?.email
+                : undefined),
+            roleLabel: "Owner",
+            avatarUrl:
+              useRealApi && apiProfile?.profilePictureUrl ? resolveApiMediaUrl(apiProfile.profilePictureUrl) : undefined,
+            fallbackIcon: User,
+            headerExtra: (
+              <VerificationBadge
+                status={verificationStatus}
+                showIcon
+                className="text-[10px]"
+                approvedAsActiveStyle
+                needsResubmit={profileUpdatedAfterLoad}
+                onVerifyClick={demoMode ? () => setDemoLoginPromptOpen(true) : useRealApi ? () => setVerifySubmitDialogOpen(true) : undefined}
+              />
+            ),
+          }}
+          renderTabBadge={(id) => {
+            if (id === "requests" && pendingRequests.length > 0) {
+              return (
+                <span className="bg-amber-500 text-amber-950 text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{pendingRequests.length}</span>
+              );
+            }
+            if (id === "notifications" && unreadCount > 0) {
+              return (
+                <span className="bg-destructive text-destructive-foreground text-[10px] sm:text-xs rounded-full px-1.5 py-0.5 font-medium tabular-nums">{unreadCount}</span>
+              );
+            }
+            return null;
+          }}
+        >
             {activeTab === "overview" && (
               <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
                   {[
                     { icon: Building2, label: "Properties", value: myProperties.length, sub: null, iconBg: "bg-emerald-100 dark:bg-emerald-900/30", iconColor: "text-emerald-600 dark:text-emerald-400", tab: "assets" },
                     { icon: Users, label: "Requests", value: myBookings.length, sub: pendingRequests.length > 0 ? `${pendingRequests.length} pending` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "requests" },
                     { icon: IndianRupee, label: "Revenue", value: `₹${displayPayments.filter(p => p.status === "PAID").reduce((s, p) => s + p.amount, 0).toLocaleString()}`, sub: null, iconBg: "bg-sky-100 dark:bg-sky-900/30", iconColor: "text-sky-600 dark:text-sky-400", tab: "payments" },
                     { icon: FileText, label: "Complaints", value: useRealApi && apiComplaintsLoading ? "…" : myComplaintsAll.length, sub: openComplaintsCount > 0 ? `${openComplaintsCount} open` : null, iconBg: "bg-amber-100 dark:bg-amber-900/30", iconColor: "text-amber-600 dark:text-amber-400", tab: "complaints" },
                   ].map(s => (
-                    <button type="button" key={s.label} onClick={() => setActiveTab(s.tab)} className="bg-white/90 dark:bg-slate-900/80 backdrop-blur rounded-xl border border-slate-200 dark:border-slate-700 shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 p-4 text-left hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 transition-all duration-200 active:scale-[0.99] group">
-                      <div className="flex items-center justify-between mb-2">
-                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center ${s.iconBg}`}><s.icon className={`h-4 w-4 ${s.iconColor}`} /></div>
-                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <button type="button" key={s.label} onClick={() => setActiveTab(s.tab)} className="group min-h-[7.5rem] rounded-xl border border-slate-200 dark:border-slate-700 bg-white/90 dark:bg-slate-900/80 p-3 sm:p-4 text-left shadow-md shadow-slate-200/40 dark:shadow-slate-950/50 transition-all duration-200 hover:shadow-lg hover:border-sky-300/60 dark:hover:border-sky-500/40 hover:bg-sky-50/40 dark:hover:bg-sky-900/20 active:scale-[0.99] md:min-h-0">
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <div className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 ${s.iconBg}`}><s.icon className={`h-4 w-4 ${s.iconColor}`} /></div>
+                        <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0" aria-hidden />
                       </div>
-                      <p className="text-2xl font-bold text-foreground">{s.value}</p>
-                      <p className="text-xs text-muted-foreground">{s.label}</p>
-                      {s.sub && <p className="text-[10px] text-muted-foreground/80 mt-0.5">{s.sub}</p>}
+                      <p className="text-xl sm:text-2xl font-bold tabular-nums text-foreground break-words leading-tight">{s.value}</p>
+                      <p className="text-[11px] sm:text-xs text-muted-foreground mt-0.5 leading-snug">{s.label}</p>
+                      {s.sub && <p className="text-[10px] text-muted-foreground/80 mt-0.5 leading-snug line-clamp-2">{s.sub}</p>}
                     </button>
                   ))}
                 </div>
@@ -1737,6 +1755,16 @@ const OwnerDashboard = () => {
                       </div>
                     ) : (
                       <div className="space-y-8">
+                        <ProfilePhotoSection
+                          userId={decodedToken?.userId ?? apiProfile?.userId ?? null}
+                          profilePictureUrl={useRealApi ? apiProfile?.profilePictureUrl : null}
+                          displayName={useRealApi ? apiProfile?.fullName : profile?.name}
+                          username={useRealApi ? apiProfile?.userName : currentOwner}
+                          demoMode={demoMode}
+                          onDemoAction={() => setDemoLoginPromptOpen(true)}
+                          editable={useRealApi || demoMode}
+                          onMetaUpdated={reloadProfileDataOnly}
+                        />
                         <div>
                           <h3 className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
                             <span className="w-1 h-4 rounded-full bg-sky-500/70" /> Account
@@ -1780,8 +1808,8 @@ const OwnerDashboard = () => {
                                   <p className="text-sm font-medium text-foreground">{apiProfile.gender || "—"}</p>
                                 </div>
                                 <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-800/30 p-4">
-                                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">ID</p>
-                                  <p className="text-sm font-medium text-foreground">{apiProfile.idType && apiProfile.idNumber ? `${apiProfile.idType}: ${apiProfile.idNumber}` : (apiProfile.aadharNumber ? `Aadhar: XXXX-XXXX-${apiProfile.aadharNumber.slice(-4)}` : "—")}</p>
+                                  <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Aadhar number</p>
+                                  <p className="text-sm font-medium text-foreground">{apiProfile.aadharNumber || apiProfile.idNumber || "—"}</p>
                                 </div>
                                 <div className="rounded-xl border border-slate-200/80 dark:border-slate-700/80 bg-slate-50/50 dark:bg-slate-800/30 p-4 sm:col-span-2">
                                   <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Address</p>
@@ -1881,8 +1909,7 @@ const OwnerDashboard = () => {
                 </div>
               );
             })()}
-          </div>
-        </div>
+        </DashboardNavShell>
       </div>
 
       {/* Add/Edit Property — same dialog shell as profile */}

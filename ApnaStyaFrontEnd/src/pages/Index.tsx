@@ -7,15 +7,12 @@ import PropertyCard from "@/components/property/PropertyCard";
 import DemoRoleSwitcher from "@/features/demo/DemoRoleSwitcher";
 import DemoModePopup from "@/features/demo/DemoModePopup";
 import { useDemoData } from "@/features/demo/DemoDataContext";
-import { HomeFeaturedLoadingNotice } from "@/components/home/HomeFeaturedLoadingNotice";
 import { FeaturedPropertiesSkeleton } from "@/components/home/FeaturedPropertiesSkeleton";
 import { Button } from "@/components/ui/button";
 import { properties, type Property } from "@/constants/properties";
 import { getFeaturedFromCache, loadFeaturedPropertiesCached } from "@/lib/publicListingCache";
 import { Link } from "react-router-dom";
 import heroBg from "@/assets/hero-bg.jpg";
-
-const FEATURED_LOADING_NOTICE_SESSION_KEY = "apnastay_dismiss_featured_loading_notice";
 
 const filterChips = [
   { label: "Flat", key: "type", value: "Flat" },
@@ -34,14 +31,6 @@ const Index = () => {
   const [featuredLoading, setFeaturedLoading] = useState(() =>
     demoMode ? false : getFeaturedFromCache() === null,
   );
-  /** Persist dismiss for the browser tab so revisiting Home doesn’t reopen the toast */
-  const [featuredLoadingNoticeDismissed, setFeaturedLoadingNoticeDismissed] = useState(() => {
-    try {
-      return sessionStorage.getItem(FEATURED_LOADING_NOTICE_SESSION_KEY) === "1";
-    } catch {
-      return false;
-    }
-  });
 
   const staticFeatured = properties.filter((p) => p.isFeatured);
   const apiFeatured = featuredProperties;
@@ -185,11 +174,10 @@ const Index = () => {
             </p>
           </div>
           {featuredLoading ? (
-            <div className="space-y-6">
+            <div className="space-y-5">
               <FeaturedPropertiesSkeleton count={6} />
-              <p className="text-center text-xs text-muted-foreground flex items-center justify-center gap-2">
-                <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" aria-hidden />
-                Loading the latest listings…
+              <p className="text-center text-sm text-muted-foreground max-w-md mx-auto leading-relaxed">
+                Hang tight — we&apos;re loading featured homes below. You can still use search and navigation.
               </p>
             </div>
           ) : displayProperties.length === 0 ? (
@@ -214,21 +202,7 @@ const Index = () => {
         </div>
       </section>
 
-      {/* Demo mode popup */}
       <DemoModePopup />
-
-      {/* Production: friendly notice while featured API loads (dismissible) */}
-      <HomeFeaturedLoadingNotice
-        open={featuredLoading && !demoMode && !featuredLoadingNoticeDismissed}
-        onDismiss={() => {
-          setFeaturedLoadingNoticeDismissed(true);
-          try {
-            sessionStorage.setItem(FEATURED_LOADING_NOTICE_SESSION_KEY, "1");
-          } catch {
-            /* ignore */
-          }
-        }}
-      />
 
       <Footer />
     </div>
