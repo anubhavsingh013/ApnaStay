@@ -312,8 +312,24 @@ const Dashboard = () => {
       setProfileSubmitForm(newForm);
       profileUpdateInitialRef.current = JSON.stringify(newForm);
     } else {
-      setProfileSubmitForm((f) => ({ ...f, fullName: "", gender: "Male", dateOfBirth: "", aadharNumber: "", mobile: "", idType: "Aadhar", idNumber: "", address: "", city: "", district: "", state: "", pinCode: "" }));
-      profileUpdateInitialRef.current = null;
+      // Same baseline as Owner/Broker: must snapshot empty form so "changed" detection works when
+      // apiProfile is still loading, missing (404), or demo has no profile — ref must never stay null.
+      const emptyForm = {
+        fullName: "",
+        gender: "Male",
+        dateOfBirth: "",
+        aadharNumber: "",
+        mobile: "",
+        idType: "Aadhar",
+        idNumber: "",
+        address: "",
+        city: "",
+        district: "",
+        state: "",
+        pinCode: "",
+      };
+      setProfileSubmitForm(emptyForm);
+      profileUpdateInitialRef.current = JSON.stringify(emptyForm);
     }
   }, [profileUpdateDialogOpen, demoMode, demoProfile, useRealApi, apiProfile]);
 
