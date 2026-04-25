@@ -7,6 +7,7 @@ import { useDemoData, type Complaint, type OwnerProfile } from "@/features/demo/
 import { useAuth } from "@/contexts/AuthContext";
 import { toastActionError, toastActionSuccess, toastSuccess, toastError } from "@/lib/app-toast";
 import type { PropertyRequest, PropertyDTO } from "@/lib/api";
+import { revokeCachedPropertyImageBlobsForResolvedUrls } from "@/lib/propertyImageBlobCache";
 import {
   getProfile,
   get2faStatus,
@@ -776,9 +777,17 @@ const OwnerDashboard = () => {
           setActiveTab("assets");
         };
         if (propertyImageFiles.length > 0) {
-          updatePropertyWithImages(editingId, req, propertyImageFiles).then(afterSave).catch((err) =>
-            toastError("Update failed", (err as Error)?.message)
-          );
+          const priorImageUrls = Array.isArray(form.images) ? form.images : [];
+          updatePropertyWithImages(editingId, req, propertyImageFiles)
+            .then((res) => {
+              const data = (res as { data?: PropertyDTO }).data;
+              revokeCachedPropertyImageBlobsForResolvedUrls([
+                ...priorImageUrls,
+                ...(data?.images ?? []),
+              ]);
+              afterSave();
+            })
+            .catch((err) => toastError("Update failed", (err as Error)?.message));
         } else {
           apiUpdateProperty(editingId, req).then(afterSave).catch((err) =>
             toastError("Update failed", (err as Error)?.message)
@@ -795,9 +804,13 @@ const OwnerDashboard = () => {
           setActiveTab("assets");
         };
         if (propertyImageFiles.length > 0) {
-          createPropertyWithImages(req, propertyImageFiles).then(afterCreate).catch((err) =>
-            toastError("Create failed", (err as Error)?.message)
-          );
+          createPropertyWithImages(req, propertyImageFiles)
+            .then((res) => {
+              const data = (res as { data?: PropertyDTO }).data;
+              revokeCachedPropertyImageBlobsForResolvedUrls(data?.images ?? []);
+              afterCreate();
+            })
+            .catch((err) => toastError("Create failed", (err as Error)?.message));
         } else {
           apiCreateProperty(req).then(afterCreate).catch((err) =>
             toastError("Create failed", (err as Error)?.message)

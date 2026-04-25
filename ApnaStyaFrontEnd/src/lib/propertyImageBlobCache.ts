@@ -21,6 +21,26 @@ export function isBackendPropertyImageUrl(url: string): boolean {
 
 const blobUrlByKey = new Map<string, string>();
 const inflightByKey = new Map<string, Promise<string>>();
+/** Bumped on revoke so in-flight fetches from before invalidation cannot write stale bytes. */
+const versionByKey = new Map<string, number>();
+
+function bumpPropertyImageCacheVersion(key: string) {
+  versionByKey.set(key, (versionByKey.get(key) ?? 0) + 1);
+}
+
+function revokeBlobEntryForKey(key: string) {
+  const blobUrl = blobUrlByKey.get(key);
+  if (blobUrl) {
+    try {
+      URL.revokeObjectURL(blobUrl);
+    } catch {
+      /* ignore */
+    }
+    blobUrlByKey.delete(key);
+  }
+  inflightByKey.delete(key);
+  bumpPropertyImageCacheVersion(key);
+}
 
 export function peekCachedPropertyImageBlobUrl(resolvedUrl: string): string | undefined {
   const key = getPropertyImageFileCacheKey(resolvedUrl);
@@ -43,24 +63,55 @@ export function ensureCachedPropertyImageBlobUrl(resolvedUrl: string): Promise<s
   const existing = inflightByKey.get(key);
   if (existing) return existing;
 
-  const p = fetch(resolvedUrl, { credentials: "include", mode: "cors" })
+  const versionAtStart = versionByKey.get(key) ?? 0;
+
+  const p = fetch(resolvedUrl, {
+    credentials: "include",
+    mode: "cors",
+    cache: "no-store",
+  })
     .then((res) => {
+      if ((versionByKey.get(key) ?? 0) !== versionAtStart) {
+        throw new Error("__property_image_stale__");
+      }
       if (!res.ok) throw new Error(`Image ${res.status}`);
       return res.blob();
     })
     .then((blob) => {
+      if ((versionByKey.get(key) ?? 0) !== versionAtStart) {
+        throw new Error("__property_image_stale__");
+      }
       const objectUrl = URL.createObjectURL(blob);
+      if ((versionByKey.get(key) ?? 0) !== versionAtStart) {
+        URL.revokeObjectURL(objectUrl);
+        throw new Error("__property_image_stale__");
+      }
       blobUrlByKey.set(key, objectUrl);
       inflightByKey.delete(key);
       return objectUrl;
     })
-    .catch(() => {
+    .catch((err) => {
       inflightByKey.delete(key);
+      if (err instanceof Error && err.message === "__property_image_stale__") {
+        return ensureCachedPropertyImageBlobUrl(resolvedUrl);
+      }
       throw new Error("Failed to load property image");
     });
 
   inflightByKey.set(key, p);
   return p;
+}
+
+/** Drop cached blob(s) for these URLs so the next load refetches bytes (e.g. after replacing images on the server). */
+export function revokeCachedPropertyImageBlobsForResolvedUrls(urls: readonly string[] | undefined): void {
+  if (!urls?.length) return;
+  const seen = new Set<string>();
+  for (const raw of urls) {
+    const key = getPropertyImageFileCacheKey(raw?.trim?.() ? raw.trim() : String(raw ?? ""));
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    revokeBlobEntryForKey(key);
+  }
 }
 
 /** Optional: clear blob URLs (e.g. after logout). */
@@ -74,4 +125,5 @@ export function revokeAllCachedPropertyImageBlobs() {
   }
   blobUrlByKey.clear();
   inflightByKey.clear();
+  versionByKey.clear();
 }

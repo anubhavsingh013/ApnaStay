@@ -7,6 +7,7 @@ import { useDemoData, type AdminProfileItem, type OwnerProfile, type BrokerProfi
 import { useExitDemoOnDashboardAction } from "@/features/demo/useExitDemoOnDashboardAction";
 import { useAuth } from "@/contexts/AuthContext";
 import { toastSuccess, toastError } from "@/lib/app-toast";
+import { revokeCachedPropertyImageBlobsForResolvedUrls } from "@/lib/propertyImageBlobCache";
 import {
   adminGetUsers,
   adminGetRoles,
@@ -916,6 +917,7 @@ const AdminDashboard = () => {
 
   const handleCreateProperty = () => {
     const payload = buildPropertyPayload();
+    const hadImageUpload = propertyImageFiles.length > 0;
     setPropertySubmitting(true);
     const onDone = (data: PropertyDTO) => {
       setApiProperties((prev) => [...prev, data]);
@@ -924,11 +926,15 @@ const AdminDashboard = () => {
       setEditingProperty(null);
       setPropertyImageFiles([]);
     };
-    const req = propertyImageFiles.length > 0
+    const req = hadImageUpload
       ? createPropertyWithImages(payload, propertyImageFiles)
       : createProperty(payload);
     req
-      .then((res) => onDone((res as { data: PropertyDTO }).data))
+      .then((res) => {
+        const data = (res as { data: PropertyDTO }).data;
+        if (hadImageUpload) revokeCachedPropertyImageBlobsForResolvedUrls(data.images ?? []);
+        onDone(data);
+      })
       .catch((err) => toastError("Create failed", err?.message))
       .finally(() => setPropertySubmitting(false));
   };
@@ -936,6 +942,8 @@ const AdminDashboard = () => {
   const handleUpdateProperty = () => {
     if (!editingProperty) return;
     const payload = buildPropertyPayload();
+    const priorImages = editingProperty.images ?? [];
+    const hadImageUpload = propertyImageFiles.length > 0;
     setPropertySubmitting(true);
     const onDone = (data: PropertyDTO) => {
       setApiProperties((prev) => prev.map((p) => (p.id === data.id ? data : p)));
@@ -944,11 +952,17 @@ const AdminDashboard = () => {
       setEditingProperty(null);
       setPropertyImageFiles([]);
     };
-    const req = propertyImageFiles.length > 0
+    const req = hadImageUpload
       ? updatePropertyWithImages(editingProperty.id, payload, propertyImageFiles)
       : updateProperty(editingProperty.id, payload);
     req
-      .then((res) => onDone((res as { data: PropertyDTO }).data))
+      .then((res) => {
+        const data = (res as { data: PropertyDTO }).data;
+        if (hadImageUpload) {
+          revokeCachedPropertyImageBlobsForResolvedUrls([...priorImages, ...(data.images ?? [])]);
+        }
+        onDone(data);
+      })
       .catch((err) => toastError("Update failed", err?.message))
       .finally(() => setPropertySubmitting(false));
   };
